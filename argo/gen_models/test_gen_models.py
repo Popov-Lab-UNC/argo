@@ -1,6 +1,10 @@
 from argo.gen_models.interface import GenModelInterface
 import torch
 from pathlib import Path
+from dotenv import load_dotenv
+import os
+
+load_dotenv()
 
 # Use CUDA if available
 use_cuda = torch.cuda.is_available()
@@ -8,7 +12,9 @@ print(f"Using CUDA: {use_cuda}")
 
 # Test MolMiM (requires a valid API key)
 def test_molmim():
-    api_key = "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"
+    api_key = os.environ.get("MOLMIM_API_KEY")
+    if not api_key:
+        raise RuntimeError("MOLMIM_API_KEY environment variable not set.")
     molmim = GenModelInterface(model_type='molmim', api_token=api_key)
     try:
         result = molmim.generate(
