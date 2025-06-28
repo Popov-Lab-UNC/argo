@@ -2,6 +2,10 @@ from argo.gen_models.interface import GenModelInterface
 import torch
 from pathlib import Path
 
+# Use CUDA if available
+use_cuda = torch.cuda.is_available()
+print(f"Using CUDA: {use_cuda}")
+
 # Test MolMiM (requires a valid API key)
 def test_molmim():
     api_key = "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"
@@ -26,7 +30,7 @@ def test_molmim():
 
 # Test SAFE-GPT (de novo generation, scaffold decoration, linker generation)
 def test_safegpt():
-    safegpt = GenModelInterface(model_type='safegpt')
+    safegpt = GenModelInterface(model_type='safegpt', use_cuda=use_cuda)
 
     # De Novo Generation
     try:
@@ -75,12 +79,9 @@ def test_safegpt():
         print(f"SAFE-GPT Linker Generation test failed: {e}")
 
 def test_gem():
-    # Use CUDA if available
-    use_cuda = torch.cuda.is_available()
-    print(f"Using CUDA: {use_cuda}")
     # Dummy data for testing
-    smiles = ["CCO", "CCN", "CCC"]
-    labels = [0.1, 0.2, 0.3]
+    smiles = ["c1ccccc1", "CC(=O)Nc1ccc(O)cc1", "CN1C=NC2=C1C(=O)N(C)C(=O)N2C"]
+    labels = [-4.0, -4.0, -8.0]
     # You must provide a valid model path for real tests
     model_path = str(Path(__file__).parent / "pretrained" / "gem_chembl.pt")
     gem = GenModelInterface(model_type='gem', model_path=model_path, use_cuda=use_cuda)
@@ -100,7 +101,7 @@ def test_gem():
         print(f"GEM test failed: {e}")
 
 if __name__ == "__main__":
-    print("Testing MolMiM...")
+    print("\nTesting MolMiM...")
     test_molmim()
     print("\nTesting SAFE-GPT...")
     test_safegpt()

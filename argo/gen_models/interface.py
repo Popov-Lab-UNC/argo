@@ -9,19 +9,19 @@ warnings.filterwarnings("ignore", category=UserWarning, module="transformers.gen
 from .gem import GEMModel
 
 class GenModelInterface:
-    def __init__(self, model_type: str, model_path: Optional[str] = None, api_token: Optional[str] = None, use_cuda: bool = True):
+    def __init__(self, model_type: str, model_path: Optional[str] = None, use_cuda: bool = True, api_token: Optional[str] = None):
         """
         model_type: 'molmim', 'safegpt', 'gem', or 'custom'
         model_path: Optional path to the model or config. Only required for 'custom' or for SAFE-GPT custom weights.
         api_token: API token for MolMiM (required if using MolMiM)
-        use_cuda: Whether to use CUDA for GEM model
+        use_cuda: Whether to use CUDA for SAFE-GPT and GEM models
         """
         self.model_type = model_type.lower()
         if self.model_type == 'custom' and model_path is None:
             raise ValueError("model_path is required for custom model type")
         self.model_path = model_path
-        self.api_token = api_token
         self.use_cuda = use_cuda
+        self.api_token = api_token
         self.model = self._load_model()
 
     def _load_model(self):
@@ -39,8 +39,9 @@ class GenModelInterface:
                 tokenizer = SAFETokenizer.from_pretrained(self.model_path)
                 model = SAFEDoubleHeadsModel.from_pretrained(self.model_path)
                 designer = sf.SAFEDesign(model=model, tokenizer=tokenizer)
+                designer.model = designer.model.to('cuda' if self.use_cuda else 'cpu')
             else:
-                designer = sf.SAFEDesign.load_default(verbose=False)
+                designer = sf.SAFEDesign.load_default(device='cuda' if self.use_cuda else 'cpu', verbose=False)
             return designer
         elif self.model_type == 'gem':
             return GEMModel(
