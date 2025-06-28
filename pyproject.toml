@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "argo"
+version = "0.1"
+description = "A generative modeling package."
+authors = [
+    { name = "Shu-Hang Lin", email = "shuhang@unc.edu" }
+]
+readme = "README.md"
+requires-python = ">=3.10" 
