@@ -1,12 +1,12 @@
 import requests
 import json
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, List
 
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub.file_download")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.generation.configuration_utils")
 
-from argo.gen_models.gem import GEMModel
+from .gem import GEMModel
 
 class GenModelInterface:
     def __init__(self, model_type: str, model_path: Optional[str] = None, api_token: Optional[str] = None, use_cuda: bool = True):
@@ -64,28 +64,33 @@ class GenModelInterface:
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
 
-    def _generate_molmim(self, mode: str, **kwargs):
+    def _generate_molmim(self, mode: str, **kwargs) -> List[str]:
         """
-        mode: Only 'de_novo' is supported for MolMiM (API expects a SMILES string and options)
-        kwargs: Should include 'smi' and other API parameters
+        Calls the NVIDIA MolMiM API.
+
+        Args:
+            mode (str): The generation algorithm to use (e.g., 'CMA-ES'). In the payload, this is 'algorithm'.
+            **kwargs: Must include 'smi' and other API parameters like 'num_molecules'.
         """
         invoke_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
-        if not self.api_token:
-            raise ValueError("MolMiM API token must be provided.")
         headers = {
             "Authorization": f"Bearer {self.api_token}",
             "Accept": "application/json",
         }
-        payload = dict(kwargs)
-        # 'smi' is required
-        if 'smi' not in payload:
-            raise ValueError("'smi' (SMILES string) must be provided for MolMiM generation.")
+        
+        # 'smi' is required for the API endpoint
+        if 'smi' not in kwargs:
+            raise ValueError("'smi' (a starting SMILES string) must be provided in kwargs for MolMiM generation.")
+        
+        # The 'mode' for this interface maps to the 'algorithm' parameter in the MolMiM API
+        payload = {"algorithm": mode, **kwargs}
+        
         session = requests.Session()
         response = session.post(invoke_url, headers=headers, json=payload)
         response.raise_for_status()
         response_body = response.json()
 
-        # Parse molecules list from response
+        # The API returns a JSON string within the 'molecules' key, which needs to be parsed again.
         molecules = json.loads(response_body['molecules'])
         
         # Extract SMILES strings from each molecule dict

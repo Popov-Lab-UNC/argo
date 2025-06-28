@@ -82,7 +82,7 @@ def test_gem():
     smiles = ["CCO", "CCN", "CCC"]
     labels = [0.1, 0.2, 0.3]
     # You must provide a valid model path for real tests
-    model_path = str(Path(__file__).parent / "pretrained" / "pretrained_chembl.pt")
+    model_path = str(Path(__file__).parent / "pretrained" / "gem_chembl.pt")
     gem = GenModelInterface(model_type='gem', model_path=model_path, use_cuda=use_cuda)
     try:
         result = gem.generate(
