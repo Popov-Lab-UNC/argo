@@ -99,7 +99,7 @@ def test_gem():
             do_filter=False,
             tot_hits=5,
             batch_size=2,
-            save_auxiliary_files=False
+            save_files=False
         )
         print("GEM result:")
         print(result)
