@@ -47,10 +47,19 @@ def _fine_tune_model(model: Transformer, smiles_data: List[str], lr: float, n_ep
 def _train_rf_classifier(smiles: List[str], labels: np.ndarray, save_path: Optional[str] = None):
     """Trains a RandomForest classifier for filtering."""
     logging.info("Training RandomForest classifier...")
-    x, y = utils.get_fps(smiles, labels, func="rdkit")
+    valid_smiles, x, y = utils.get_fps(smiles, labels, func="rdkit")
+    
+    if len(x) == 0:
+        logging.error("No valid molecules found to train the classifier. Aborting training.")
+        return None
+
     # Remove any rows with NaNs that might result from failed fingerprinting
     nan_mask = ~np.isnan(x).any(axis=1)
     x, y = x[nan_mask], y[nan_mask]
+
+    if len(x) == 0:
+        logging.error("All valid molecules resulted in NaN fingerprints. Aborting training.")
+        return None
 
     clf = RandomForestClassifier(n_jobs=-1, class_weight='balanced').fit(x, y)
     
@@ -69,7 +78,7 @@ def run_generation_workflow(
     out_dir: Optional[str] = None,
     prefix: Optional[str] = None,
     save_models: bool = False,
-    save_auxiliary_files: bool = False,
+    save_files: bool = False,
     # Generation parameters
     tot_hits: int = 1000,
     batch_size: int = 100,
@@ -93,7 +102,7 @@ def run_generation_workflow(
     logging.info(f"Running on device: {device}")
 
     # --- 1. Setup directories and paths ---
-    if save_models or save_auxiliary_files:
+    if save_models or save_files:
         out_dir = out_dir or os.getcwd()
         os.makedirs(out_dir, exist_ok=True)
         prefix = prefix or str(int(time.time()))
@@ -158,21 +167,35 @@ def run_generation_workflow(
             
         # Optional Filtering: Classifier
         if do_filter and clf:
-            fps, _ = utils.get_fps(new_candidates, func="rdkit")
+            valid_candidates, fps, _ = utils.get_fps(new_candidates, func="rdkit")
+            
             if len(fps) > 0:
-                good_idx = ~np.any(np.isnan(fps), axis=1)
-                if np.any(good_idx):
-                    probs = clf.predict_proba(fps[good_idx])[:, 1]
+                good_nan_mask = ~np.any(np.isnan(fps), axis=1)
+                
+                if np.any(good_nan_mask):
+                    fps_no_nan = fps[good_nan_mask]
+                    candidates_no_nan = np.array(valid_candidates)[good_nan_mask]
+
+                    probs = clf.predict_proba(fps_no_nan)[:, 1]
                     passing_indices = np.where(probs >= conf_thresh)[0]
-                    new_candidates = np.array(new_candidates)[good_idx][passing_indices].tolist()
+                    
+                    new_candidates = candidates_no_nan[passing_indices].tolist()
+                else:
+                    new_candidates = []
+            else:
+                new_candidates = []
 
         # Optional Filtering: Diversity
-        if diverse_thresh is not None and len(generated_hits) > 0:
-            query_fps, _ = utils.get_fps(new_candidates, func="morgan")
-            target_fps, _ = utils.get_fps(list(generated_hits), func="morgan")
-            if len(query_fps) > 0 and len(target_fps) > 0:
-                sims = utils.bulk_fp_tanimoto_similarity(query_fps, target_fps, pooling="max")
-                new_candidates = [s for s, sim in zip(new_candidates, sims) if sim < diverse_thresh]
+        if diverse_thresh is not None and len(generated_hits) > 0 and len(new_candidates) > 0:
+            query_smiles, query_fps, _ = utils.get_fps(new_candidates, func="morgan")
+            
+            if len(query_fps) > 0:
+                # We only need fingerprints for the target set
+                _, target_fps, _ = utils.get_fps(list(generated_hits), func="morgan")
+                if len(target_fps) > 0:
+                    sims = utils.bulk_fp_tanimoto_similarity(query_fps, target_fps, pooling="max")
+                    # Filter the list of SMILES that corresponds to the query_fps
+                    new_candidates = [s for s, sim in zip(query_smiles, sims) if sim < diverse_thresh]
 
         for hit in new_candidates:
             if len(generated_hits) < tot_hits:
@@ -180,7 +203,7 @@ def run_generation_workflow(
         
         logging.info(f"Progress: {len(generated_hits)} / {tot_hits} hits generated.")
 
-        if save_auxiliary_files:
+        if save_files:
             with open(os.path.join(out_dir, f"{prefix}_denovo_hits.smi"), "w") as f:
                 f.write("\n".join(generated_hits))
             with open(os.path.join(out_dir, f"{prefix}_status.txt"), 'w') as f:

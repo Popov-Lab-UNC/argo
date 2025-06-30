@@ -48,15 +48,23 @@ def calc_morgan(mol: Chem.Mol, radius=4, n_bits=256, count=False, use_chirality=
         _fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=n_bits, useChirality=use_chirality)
     return _fp
 
-def get_fps(smis: List[str], y: Optional[np.ndarray] = None, func: Literal["morgan", "rdkit"] = "morgan") -> Tuple[list, Optional[np.ndarray]]:
+def get_fps(smis: List[str], y: Optional[np.ndarray] = None, func: Literal["morgan", "rdkit"] = "morgan") -> Tuple[List[str], list, Optional[np.ndarray]]:
+    """
+    Calculates fingerprints for a list of SMILES.
+
+    Returns a tuple of (valid_smiles, fingerprints, corresponding_y_values),
+    ensuring that all returned lists/arrays have the same length and correspond
+    to only the molecules for which fingerprint generation was successful.
+    """
     mols = [Chem.MolFromSmiles(s) for s in smis]
     
     valid_indices = [i for i, m in enumerate(mols) if m is not None]
-    valid_mols = [mols[i] for i in valid_indices]
     
-    if not valid_mols:
-        return [], (np.array([]) if y is not None else None)
+    if not valid_indices:
+        return [], [], (np.array([]) if y is not None else None)
 
+    valid_smiles = [smis[i] for i in valid_indices]
+    valid_mols = [mols[i] for i in valid_indices]
     y_out = y[valid_indices] if y is not None else None
     
     if func == "morgan":
@@ -66,7 +74,7 @@ def get_fps(smis: List[str], y: Optional[np.ndarray] = None, func: Literal["morg
     else:
         raise ValueError(f"Unknown fingerprint function: {func}")
         
-    return fps, y_out
+    return valid_smiles, fps, y_out
 
 def canonicalize_smiles(smis: List[str], y: Optional[np.ndarray] = None) -> Tuple[List[str], Optional[np.ndarray]]:
     """
@@ -107,7 +115,7 @@ def bulk_fp_tanimoto_similarity(query_fps: list, target_fps: list, pooling: Opti
     raise ValueError(f"Pooling must be in ['max', 'mean'], got {pooling}")
 
 def pdist_tanimoto(smiles: List[str]) -> list:
-    fps, _ = get_fps(smiles, func="morgan")
+    valid_smiles, fps, _ = get_fps(smiles, func="morgan")
     if len(fps) < 2:
         return []
     dists = []

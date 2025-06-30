@@ -19,7 +19,7 @@ def main():
     parser.add_argument("--score_col", type=str, default='Score', help="Name of the score column (used in 'filter' mode).")
     parser.add_argument("--prefix", type=str, default=None, help="Prefix for all output files (defaults to timestamp).")
     parser.add_argument("--save_models", action="store_true", help="Save the fine-tuned generator and trained classifier.")
-    parser.add_argument("--save_aux_files", action="store_true", help="Save auxiliary files like hit lists and status updates.")
+    parser.add_argument("--save_files", action="store_true", help="Save files like hit lists and status updates.")
 
     # Model and Execution Arguments
     parser.add_argument("--mode", type=str, required=True, choices=['filter', 'bias_set'], help="Workflow mode: 'filter' (use scores) or 'bias_set' (use all SMILES).")
@@ -62,7 +62,7 @@ def main():
         out_dir=args.outdir,
         prefix=args.prefix,
         save_models=args.save_models,
-        save_auxiliary_files=args.save_aux_files,
+        save_files=args.save_files,
         tot_hits=args.tot_hits,
         batch_size=args.batch_size,
         gen_model_tuned=args.gen_model_tuned,
