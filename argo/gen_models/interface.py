@@ -7,6 +7,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hu
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.generation.configuration_utils")
 
 from .gem import GEMModel
+from argo.gen_models.f_rag.optimizer import f_RAG
 
 class GenModelInterface:
     def __init__(self, model_type: str, model_path: Optional[str] = None, use_cuda: bool = True, api_token: Optional[str] = None):
@@ -62,6 +63,11 @@ class GenModelInterface:
             return self._generate_safegpt(mode, **kwargs)
         elif self.model_type == 'gem':
             return self._generate_gem(mode, **kwargs)
+        elif self.model_type == 'f-rag':
+            args = kwargs.get('args')
+            if args is None:
+                raise ValueError("'args' must be provided for f-rag model_type.")
+            return f_RAG(args)
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
 

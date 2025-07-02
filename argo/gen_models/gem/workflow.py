@@ -154,7 +154,9 @@ def run_generation_workflow(
     generated_hits = set()
     initial_smiles_set = set(biasing_smiles)
 
+    num_epochs = 0
     while len(generated_hits) < tot_hits:
+        num_epochs += 1
         raw_batch = gen_model.generate(batch_size, device)
         # Canonicalize and filter out invalid/empty SMILES from generation
         batch_smiles, _ = utils.canonicalize_smiles(raw_batch)
@@ -207,6 +209,6 @@ def run_generation_workflow(
             with open(os.path.join(out_dir, f"{prefix}_denovo_hits.smi"), "w") as f:
                 f.write("\n".join(generated_hits))
             with open(os.path.join(out_dir, f"{prefix}_status.txt"), 'w') as f:
-                f.write(f"Num Hits: {len(generated_hits)}\nLast Update: {str(datetime.now())}\n")
+                f.write(f"Num Epochs: {num_epochs}\nNum Hits: {len(generated_hits)}\nLast Update: {str(datetime.now())}\n")
 
     return list(generated_hits)
