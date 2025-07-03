@@ -29,6 +29,7 @@ class GenerationTask:
         'scaffold_decoration',
         'linker_generation',
         'property_optimization',
+        'biased_generation',
         'finetune_and_generate'
     ]
     # Inputs for different modes
@@ -70,7 +71,7 @@ class SAFEGenerator(BaseGenerator):
             from safe.trainer.model import SAFEDoubleHeadsModel
             from safe.tokenizer import SAFETokenizer
         except ImportError:
-            raise ImportError("The 'safe-generative-models' package must be installed for SAFE-GPT usage. Please run 'pip install safe-generative-models'.")
+            raise ImportError("The 'safe-mol' package must be installed for SAFE-GPT usage. Please run 'pip install safe-mol'.")
 
         device = 'cuda' if self.use_cuda else 'cpu'
         if model_path:
@@ -82,17 +83,45 @@ class SAFEGenerator(BaseGenerator):
             designer = sf.SAFEDesign.load_default(device=device, verbose=False)
         self.designer = designer
 
-    def de_novo(self, n_samples: int = 12, n_trials: int = 1, sanitize: bool = True) -> List[str]:
+    def de_novo(self, 
+                n_samples: int = 10, 
+                n_trials: int = 1,
+                sanitize: bool = True
+    ) -> List[str]:
         """Generates molecules from scratch."""
-        return self.designer.de_novo_generation(n_samples_per_trial=n_samples, n_trials=n_trials, sanitize=sanitize)
+        return self.designer.de_novo_generation(n_samples_per_trial=n_samples, 
+                                                n_trials=n_trials, 
+                                                sanitize=sanitize)
 
-    def decorate_scaffold(self, scaffold: str, n_samples: int = 12, n_trials: int = 1, sanitize: bool = True) -> List[str]:
+    def decorate_scaffold(self, 
+                          scaffold: str, 
+                          n_samples: int = 10, 
+                          n_trials: int = 1,
+                          sanitize: bool = True,
+                          random_seed: int = 42
+    ) -> List[str]:
         """Generates molecules by decorating a given scaffold."""
-        return self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=n_samples, n_trials=n_trials, sanitize=sanitize)
+        return self.designer.scaffold_decoration(scaffold=scaffold, 
+                                                 n_samples_per_trial=n_samples, 
+                                                 n_trials=n_trials, 
+                                                 sanitize=sanitize, 
+                                                 random_seed=random_seed)
 
-    def link_fragments(self, fragment1: str, fragment2: str, n_samples: int = 12, n_trials: int = 1, sanitize: bool = True) -> List[str]:
+    def linker_generation(self, 
+                       fragment1: str, 
+                       fragment2: str, 
+                       n_samples: int = 10, 
+                       n_trials: int = 1, 
+                       sanitize: bool = True,
+                       random_seed: int = 42
+    ) -> List[str]:
         """Generates linkers to connect two molecular fragments."""
-        return self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=n_samples, n_trials=n_trials, sanitize=sanitize)
+        return self.designer.linker_generation(fragment1, 
+                                               fragment2, 
+                                               n_samples_per_trial=n_samples, 
+                                               n_trials=n_trials, 
+                                               sanitize=sanitize,
+                                               random_seed=random_seed)
 
     def generate(self, task: GenerationTask) -> List[str]:
         if task.mode == 'de_novo':
@@ -104,7 +133,7 @@ class SAFEGenerator(BaseGenerator):
         elif task.mode == 'linker_generation':
             if not task.fragments or len(task.fragments) != 2:
                 raise ValueError("A list of two 'fragments' must be provided for this task.")
-            return self.link_fragments(task.fragments[0], task.fragments[1], **task.config)
+            return self.linker_generation(task.fragments[0], task.fragments[1], **task.config)
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
@@ -118,30 +147,97 @@ class MolMIMGenerator(BaseGenerator):
             raise ValueError("An 'api_token' is required for the MolMIM model.")
         super().__init__(use_cuda=False)
         self.api_token = api_token
-        self.invoke_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
+        self.generate_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
+        self.sample_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/sample"
 
-    def _call_api(self, payload: Dict[str, Any]) -> List[str]:
+    def _call_api(self, payload: Dict[str, Any], url: str) -> List[str]:
         """Internal method to handle the API request."""
         headers = {"Authorization": f"Bearer {self.api_token}", "Accept": "application/json"}
         session = requests.Session()
-        response = session.post(self.invoke_url, headers=headers, json=payload)
+        response = session.post(url, headers=headers, json=payload)
         response.raise_for_status()
         response_body = response.json()
         molecules = json.loads(response_body['molecules'])
         return [mol['sample'] for mol in molecules]
 
-    def optimize(self, starting_smiles: str, property_name: str, num_molecules: int = 10, **api_params) -> List[str]:
+    def optimize(self, 
+                 starting_smiles: str, 
+                 algorithm: str = 'CMA-ES',
+                 iterations: int = 10,
+                 min_similarity: float = 0.7,
+                 minimize: bool = False,
+                 n_samples: int = 10,
+                 particles: int = 30,
+                 property_name: str = 'QED',
+                 scaled_radius: float = 1.0
+    ) -> List[str]:
         """Optimizes a starting molecule towards a desired property."""
-        payload = {"algorithm": api_params.pop('algorithm', 'CMA-ES'), "smi": starting_smiles, "property_name": property_name, "num_molecules": num_molecules, **api_params}
-        return self._call_api(payload)
+
+        if algorithm not in ['CMA-ES', 'none']:
+            raise ValueError("algorithm must be either 'CMA-ES' or 'none'")
+        if property_name not in ['QED', 'plogP']:
+            raise ValueError("property_name must be either 'QED' or 'plogP'")
+        
+        # Validate parameters are within allowed ranges
+        if iterations < 1 or iterations > 1000:
+            raise ValueError("iterations must be between 1 and 1000")
+        if min_similarity < 0.0 or min_similarity > 0.7:
+            raise ValueError("min_similarity must be between 0.0 and 0.7")
+        if n_samples < 1 or n_samples > 1000:
+            raise ValueError("n_samples must be between 1 and 1000")
+        if particles < 2 or particles > 3000:
+            raise ValueError("particles must be between 2 and 3000")
+        if scaled_radius < 0.0 or scaled_radius > 2.0:
+            raise ValueError("scaled_radius must be between 0.0 and 2.0")
+
+        payload = { 
+                   "smi": starting_smiles, 
+                   "algorithm": algorithm,
+                   "iterations": iterations,
+                   "min_similarity": min_similarity,
+                   "minimize": minimize,
+                   "num_molecules": n_samples,
+                   "particles": particles,
+                   "property_name": property_name, 
+                   "scaled_radius": scaled_radius
+        }
+        return self._call_api(payload, url=self.generate_url)
+    
+    '''
+    def sample(self, 
+               starting_smiles: str, 
+               n_samples: int = 10, 
+               beam_size: int = 1, 
+               scaled_radius: float = 0.7
+    ) -> List[str]:
+        """Samples molecules from the MolMiM API using the 'sample' endpoint."""
+        
+        # Validate parameters are within allowed ranges
+        if n_samples < 1 or n_samples > 10:
+            raise ValueError("n_samples must be between 1 and 10")
+        if beam_size < 1 or beam_size > 10:
+            raise ValueError("beam_size must be between 1 and 10") 
+        if scaled_radius < 0.0 or scaled_radius > 2.0:
+            raise ValueError("scaled_radius must be between 0.0 and 2.0")
+
+        payload = {
+            "sequences": [starting_smiles],
+            "num_molecules": n_samples,
+            "beam_size": beam_size,
+            "scaled_radius": scaled_radius
+        }
+        return self._call_api(payload, url=self.sample_url)
+    '''
 
     def generate(self, task: GenerationTask) -> List[str]:
+        if not task.starting_smiles or not isinstance(task.starting_smiles, str):
+            raise ValueError("A single 'starting_smiles' string must be provided for MolMiM.")
+        
         if task.mode == 'property_optimization':
-            if not task.starting_smiles or not isinstance(task.starting_smiles, str):
-                raise ValueError("A single 'starting_smiles' string must be provided for this task.")
-            if not task.objective or not isinstance(task.objective, str):
-                raise ValueError("The 'objective' (property name string) must be provided for this task.")
-            return self.optimize(starting_smiles=task.starting_smiles, property_name=task.objective, **task.config)
+            return self.optimize(starting_smiles=task.starting_smiles, algorithm='CMA-ES', **task.config)
+        elif task.mode == 'biased_generation':
+            return self.optimize(starting_smiles=task.starting_smiles, algorithm='none', **task.config)
+            #return self.sample(starting_smiles=task.starting_smiles, **task.config)
         else:
             raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
 

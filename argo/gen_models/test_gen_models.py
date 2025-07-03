@@ -14,7 +14,7 @@ use_cuda = torch.cuda.is_available()
 print(f"Using CUDA: {use_cuda}")
 
 # Test MolMiM (requires a valid API key)
-def test_molmim():
+def test_molmim_property_optimization():
     api_key = os.environ.get("MOLMIM_API_KEY")
     if not api_key:
         raise RuntimeError("MOLMIM_API_KEY environment variable not set.")
@@ -24,20 +24,35 @@ def test_molmim():
         starting_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
         objective="QED",
         config={
-            "algorithm": "CMA-ES",
-            "num_molecules": 5,
-            "minimize": False,
-            "min_similarity": 0.3,
-            "particles": 5,
-            "iterations": 2
+            "n_samples": 2,
         }
     )
     try:
         result = molmim.generate(task)
-        print("MolMiM result:")
+        print("MolMiM Property Optimization result:")
         print(result)
     except Exception as e:
-        print(f"MolMiM test failed: {e}")
+        print(f"MolMiM Property Optimization test failed: {e}")
+
+# Test MolMiM 'biased_generation' mode
+def test_molmim_biased_generation():
+    api_key = os.environ.get("MOLMIM_API_KEY")
+    if not api_key:
+        raise RuntimeError("MOLMIM_API_KEY environment variable not set.")
+    molmim = GenerationModel(model_type='molmim', api_token=api_key)
+    task = GenerationTask(
+        mode='biased_generation',
+        starting_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
+        config={
+            "n_samples": 2,
+        }
+    )
+    try:
+        result = molmim.generate(task)
+        print("MolMiM Biased Generation result:")
+        print(result)
+    except Exception as e:
+        print(f"MolMiM Biased Generation test failed: {e}")
 
 # Test SAFE-GPT (de novo generation, scaffold decoration, linker generation)
 def test_safegpt():
@@ -160,8 +175,10 @@ def test_f_rag():
         print(f"f-RAG test failed: {e}")
 
 if __name__ == "__main__":
-    print("\nTesting MolMiM...")
-    test_molmim()
+    print("\nTesting MolMiM (property optimization)...")
+    test_molmim_property_optimization()
+    print("\nTesting MolMiM (biased generation)...")
+    test_molmim_biased_generation()
     print("\nTesting SAFE-GPT...")
     test_safegpt()
     print("\nTesting GEM...")
