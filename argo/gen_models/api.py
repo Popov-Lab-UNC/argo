@@ -15,7 +15,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hu
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.generation.configuration_utils")
 
 # Backend model imports
-from argo.argo.gen_models.f_rag.model import f_RAG
+from argo.gen_models.f_rag.model import f_RAG
 from argo.gen_models.gem.model import GEM
 
 # --- A structured way to define a generation task ---
@@ -27,10 +27,10 @@ class GenerationTask:
     """
     mode: Literal[
         'de_novo',
+        'biased_generation',
         'scaffold_decoration',
         'linker_generation',
-        'property_optimization',
-        'biased_generation'
+        'property_optimization'
     ]
     # Inputs for different modes
     scaffold: Optional[str] = None
@@ -94,7 +94,7 @@ class SAFEGenerator(BaseGenerator):
                                                 n_trials=n_trials, 
                                                 sanitize=sanitize)
 
-    def decorate_scaffold(self, 
+    def scaffold_decoration(self, 
                           scaffold: str, 
                           n_samples: int = 10, 
                           n_trials: int = 1,
@@ -130,7 +130,7 @@ class SAFEGenerator(BaseGenerator):
         elif task.mode == 'scaffold_decoration':
             if not task.scaffold:
                 raise ValueError("A 'scaffold' must be provided for this task.")
-            return self.decorate_scaffold(task.scaffold, **task.config)
+            return self.scaffold_decoration(task.scaffold, **task.config)
         elif task.mode == 'linker_generation':
             if not task.fragments or len(task.fragments) != 2:
                 raise ValueError("A list of two 'fragments' must be provided for this task.")
@@ -340,9 +340,9 @@ def GenerationModel(
         model_type: The type of model to load.
                     One of ['safegpt', 'molmim', 'gem', 'f-rag'].
         **kwargs: Arguments specific to each model.
-                  - for 'safegpt': model_path (optional), use_cuda
+                  - for 'safegpt': model_path (optional), use_cuda (optional)
                   - for 'molmim': api_token (required)
-                  - for 'gem': model_path (required), use_cuda
+                  - for 'gem': model_path (required), use_cuda (optional), finetuned (optional)
                   - for 'f-rag': vocab_path (required), and other population/size params.
     
     Returns:
