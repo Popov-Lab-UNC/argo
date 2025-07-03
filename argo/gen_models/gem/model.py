@@ -5,6 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset
+import logging
 
 from . import utils
 
@@ -229,3 +230,46 @@ class SmilesDataset(Dataset):
         smi = self.start_token + smi + self.end_token
         padded_smi = smi.ljust(self.max_len + 2, self.pad_token)[:self.max_len + 2]
         return torch.tensor([utils.CHAR_2_IDX[c] for c in padded_smi], dtype=torch.long)
+
+class GEM:
+    def __init__(self, model_path: str, device=None):
+        self.device = device or (torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        self.model = self.load_pretrained_transformer(model_path, self.device)
+
+    @staticmethod
+    def load_pretrained_transformer(model_path: str, device):
+        n_src_vocab = len(utils.TOKENS)
+        model_params = {
+            'n_src_vocab': n_src_vocab, 'd_word_vec': 512, 'n_layers': 8,
+            'n_head': 8, 'd_k': 64, 'd_inner': 1024
+        }
+        model = Transformer(**model_params)
+        state_dict = torch.load(model_path, map_location=device)
+        model.load_state_dict(state_dict)
+        model.to(device)
+        logging.info(f"Loaded pre-trained Transformer model from {model_path}")
+        return model
+
+    def fine_tune(self, smiles_data: list, lr: float = 1e-5, n_epochs: int = 10, save_path: str = None):
+        logging.info(f"Starting fine-tuning for {n_epochs} epochs with {len(smiles_data)} SMILES.")
+        dataset = SmilesDataset(smiles_data)
+        loader = torch.utils.data.DataLoader(dataset, batch_size=32, shuffle=True)
+        optimizer = torch.optim.Adam(self.model.parameters(), lr=lr)
+        self.model.fit(loader, optimizer, scheduler=None, n_epochs=n_epochs, device=self.device)
+        if save_path:
+            torch.save(self.model.state_dict(), save_path)
+            logging.info(f"Fine-tuned model saved to {save_path}")
+        return self.model
+
+    def generate(self, n_samples: int = 100, n_trials: int = 1):
+        total = n_samples * n_trials
+        all_generated = []
+        for _ in range(n_trials):
+            batch = self.model.generate(n_samples, self.device)
+            all_generated.extend(batch)
+        return all_generated
+    
+    def save_checkpoint(self, save_path: str):
+        torch.save(self.model.state_dict(), save_path)
+        logging.info(f"Model checkpoint saved to {save_path}")
+        return

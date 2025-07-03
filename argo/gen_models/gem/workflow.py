@@ -44,29 +44,30 @@ def _fine_tune_model(model: Transformer, smiles_data: List[str], lr: float, n_ep
         logging.info(f"Fine-tuned model saved to {save_path}")
     return model
 
-def _train_rf_classifier(smiles: List[str], labels: np.ndarray, save_path: Optional[str] = None):
-    """Trains a RandomForest classifier for filtering."""
-    logging.info("Training RandomForest classifier...")
-    valid_smiles, x, y = utils.get_fps(smiles, labels, func="rdkit")
-    
-    if len(x) == 0:
-        logging.error("No valid molecules found to train the classifier. Aborting training.")
-        return None
-
-    # Remove any rows with NaNs that might result from failed fingerprinting
-    nan_mask = ~np.isnan(x).any(axis=1)
-    x, y = x[nan_mask], y[nan_mask]
-
-    if len(x) == 0:
-        logging.error("All valid molecules resulted in NaN fingerprints. Aborting training.")
-        return None
-
-    clf = RandomForestClassifier(n_jobs=-1, class_weight='balanced').fit(x, y)
-    
-    if save_path:
-        dump(clf, save_path)
-        logging.info(f"Classifier model saved to {save_path}")
-    return clf
+# --- Deprecated Filtering Model Logic (moved to filter_models) ---
+# def _train_rf_classifier(smiles: List[str], labels: np.ndarray, save_path: Optional[str] = None):
+#     """Trains a RandomForest classifier for filtering."""
+#     logging.info("Training RandomForest classifier...")
+#     valid_smiles, x, y = utils.get_fps(smiles, labels, func="rdkit")
+#     
+#     if len(x) == 0:
+#         logging.error("No valid molecules found to train the classifier. Aborting training.")
+#         return None
+# 
+#     # Remove any rows with NaNs that might result from failed fingerprinting
+#     nan_mask = ~np.isnan(x).any(axis=1)
+#     x, y = x[nan_mask], y[nan_mask]
+# 
+#     if len(x) == 0:
+#         logging.error("All valid molecules resulted in NaN fingerprints. Aborting training.")
+#         return None
+# 
+#     clf = RandomForestClassifier(n_jobs=-1, class_weight='balanced').fit(x, y)
+#     
+#     if save_path:
+#         dump(clf, save_path)
+#         logging.info(f"Classifier model saved to {save_path}")
+#     return clf
 
 def run_generation_workflow(
     mode: str,
@@ -132,17 +133,18 @@ def run_generation_workflow(
 
     # --- 3. Prepare Models (Classifier and Generator) ---
     clf = None
-    if do_filter:
-        if clf_model_path and os.path.exists(clf_model_path):
-            clf = load(clf_model_path)
-            logging.info(f"Loaded pre-trained classifier from {clf_model_path}")
-        elif mode == 'filter':
-            is_active = (labels <= np.quantile(labels, score_quantile)).astype(int)
-            clf_save_path = os.path.join(out_dir, f"{prefix}_RF.joblib") if save_models else None
-            clf = _train_rf_classifier(smiles, is_active, save_path=clf_save_path)
-        else:
-            logging.warning("Filtering is enabled ('do_filter'=True) but no classifier path was provided and mode is not 'filter'. Cannot train a new one. Filtering will be skipped.")
-            do_filter = False
+    # --- Filtering logic deprecated: now handled by filter_models ---
+    # if do_filter:
+    #     if clf_model_path and os.path.exists(clf_model_path):
+    #         clf = load(clf_model_path)
+    #         logging.info(f"Loaded pre-trained classifier from {clf_model_path}")
+    #     elif mode == 'filter':
+    #         is_active = (labels <= np.quantile(labels, score_quantile)).astype(int)
+    #         clf_save_path = os.path.join(out_dir, f"{prefix}_RF.joblib") if save_models else None
+    #         clf = _train_rf_classifier(smiles, is_active, save_path=clf_save_path)
+    #     else:
+    #         logging.warning("Filtering is enabled ('do_filter'=True) but no classifier path was provided and mode is not 'filter'. Cannot train a new one. Filtering will be skipped.")
+    #         do_filter = False
 
     gen_model = _load_pretrained_transformer(gen_model_path, device)
     if not gen_model_tuned:
@@ -168,24 +170,25 @@ def run_generation_workflow(
             continue
             
         # Optional Filtering: Classifier
-        if do_filter and clf:
-            valid_candidates, fps, _ = utils.get_fps(new_candidates, func="rdkit")
-            
-            if len(fps) > 0:
-                good_nan_mask = ~np.any(np.isnan(fps), axis=1)
-                
-                if np.any(good_nan_mask):
-                    fps_no_nan = fps[good_nan_mask]
-                    candidates_no_nan = np.array(valid_candidates)[good_nan_mask]
-
-                    probs = clf.predict_proba(fps_no_nan)[:, 1]
-                    passing_indices = np.where(probs >= conf_thresh)[0]
-                    
-                    new_candidates = candidates_no_nan[passing_indices].tolist()
-                else:
-                    new_candidates = []
-            else:
-                new_candidates = []
+        # --- Filtering logic deprecated: now handled by filter_models ---
+        # if do_filter and clf:
+        #     valid_candidates, fps, _ = utils.get_fps(new_candidates, func="rdkit")
+        #     
+        #     if len(fps) > 0:
+        #         good_nan_mask = ~np.any(np.isnan(fps), axis=1)
+        #         
+        #         if np.any(good_nan_mask):
+        #             fps_no_nan = fps[good_nan_mask]
+        #             candidates_no_nan = np.array(valid_candidates)[good_nan_mask]
+        #
+        #             probs = clf.predict_proba(fps_no_nan)[:, 1]
+        #             passing_indices = np.where(probs >= conf_thresh)[0]
+        #             
+        #             new_candidates = candidates_no_nan[passing_indices].tolist()
+        #         else:
+        #             new_candidates = []
+        #     else:
+        #         new_candidates = []
 
         # Optional Filtering: Diversity
         if diverse_thresh is not None and len(generated_hits) > 0 and len(new_candidates) > 0:

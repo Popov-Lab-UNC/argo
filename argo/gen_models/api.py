@@ -7,6 +7,7 @@ import pandas as pd
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional, Dict, Any, Literal, Union
 from dataclasses import dataclass, field
+import torch
 
 # Suppress warnings from libraries for a cleaner user experience
 import warnings
@@ -14,8 +15,8 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hu
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.generation.configuration_utils")
 
 # Backend model imports
-from argo.gen_models.f_rag.optimizer import f_RAG
-from argo.gen_models.gem.workflow import run_generation_workflow
+from argo.argo.gen_models.f_rag.model import f_RAG
+from argo.gen_models.gem.model import GEM
 
 # --- A structured way to define a generation task ---
 @dataclass
@@ -29,13 +30,13 @@ class GenerationTask:
         'scaffold_decoration',
         'linker_generation',
         'property_optimization',
-        'biased_generation',
-        'finetune_and_generate'
+        'biased_generation'
     ]
     # Inputs for different modes
     scaffold: Optional[str] = None
     fragments: Optional[List[str]] = None
-    starting_smiles: Optional[Union[str, List[str]]] = None
+    # For MolMiM
+    seed_smiles: Optional[Union[str, List[str]]] = None
     labels: Optional[List[float]] = None
     # For optimization tasks
     objective: Optional[Union[str, Callable[[List[str]], List[float]]]] = None
@@ -161,7 +162,7 @@ class MolMIMGenerator(BaseGenerator):
         return [mol['sample'] for mol in molecules]
 
     def optimize(self, 
-                 starting_smiles: str, 
+                 seed_smiles: str, 
                  algorithm: str = 'CMA-ES',
                  iterations: int = 10,
                  min_similarity: float = 0.7,
@@ -191,7 +192,7 @@ class MolMIMGenerator(BaseGenerator):
             raise ValueError("scaled_radius must be between 0.0 and 2.0")
 
         payload = { 
-                   "smi": starting_smiles, 
+                   "smi": seed_smiles, 
                    "algorithm": algorithm,
                    "iterations": iterations,
                    "min_similarity": min_similarity,
@@ -205,7 +206,7 @@ class MolMIMGenerator(BaseGenerator):
     
     '''
     def sample(self, 
-               starting_smiles: str, 
+               seed_smiles: str, 
                n_samples: int = 10, 
                beam_size: int = 1, 
                scaled_radius: float = 0.7
@@ -221,7 +222,7 @@ class MolMIMGenerator(BaseGenerator):
             raise ValueError("scaled_radius must be between 0.0 and 2.0")
 
         payload = {
-            "sequences": [starting_smiles],
+            "sequences": [seed_smiles],
             "num_molecules": n_samples,
             "beam_size": beam_size,
             "scaled_radius": scaled_radius
@@ -230,14 +231,14 @@ class MolMIMGenerator(BaseGenerator):
     '''
 
     def generate(self, task: GenerationTask) -> List[str]:
-        if not task.starting_smiles or not isinstance(task.starting_smiles, str):
-            raise ValueError("A single 'starting_smiles' string must be provided for MolMiM.")
+        if not task.seed_smiles or not isinstance(task.seed_smiles, str):
+            raise ValueError("A single 'seed_smiles' string must be provided for MolMiM.")
         
         if task.mode == 'property_optimization':
-            return self.optimize(starting_smiles=task.starting_smiles, algorithm='CMA-ES', **task.config)
+            return self.optimize(seed_smiles=task.seed_smiles, algorithm='CMA-ES', **task.config)
         elif task.mode == 'biased_generation':
-            return self.optimize(starting_smiles=task.starting_smiles, algorithm='none', **task.config)
-            #return self.sample(starting_smiles=task.starting_smiles, **task.config)
+            return self.optimize(seed_smiles=task.seed_smiles, algorithm='none', **task.config)
+            #return self.sample(seed_smiles=task.seed_smiles, **task.config)
         else:
             raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
 
@@ -246,30 +247,37 @@ class GEMGenerator(BaseGenerator):
     """
     Interface for the GEM model workflow for fine-tuning and generation.
     """
-    def __init__(self, model_path: str, use_cuda: bool = True):
+    def __init__(self, model_path: str, use_cuda: bool = True, finetuned: bool = False):
         super().__init__(use_cuda=use_cuda)
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"GEM model path not found: {model_path}")
-        self.model_path = model_path
+        self.gem = GEM(model_path, device=torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu"))
+        self.finetuned = finetuned
 
-    def finetune_and_generate(self, smiles: List[str], labels: List[float], num_to_generate: int = 100, **workflow_params) -> List[str]:
-        """Fine-tunes the model on the best examples from the input and generates new molecules."""
-        return run_generation_workflow(mode='filter', 
-                                       smiles=smiles, 
-                                       labels=labels, 
-                                       gen_model_path=self.model_path, 
-                                       use_cuda=self.use_cuda,
-                                       **workflow_params
-        )
+    def save(self, save_path: str):
+        self.gem.save_checkpoint(save_path)
+        return
 
-    def generate(self, task: GenerationTask) -> List[str]:
-        if task.mode == 'finetune_and_generate':
-            if not task.starting_smiles or not task.labels:
-                raise ValueError("'starting_smiles' (a list) and 'labels' must be provided for this task.")
-            return self.finetune_and_generate(smiles=task.starting_smiles, labels=task.labels, **task.config)
+    def finetune(self, smiles: list, lr: float = 1e-5, n_epochs: int = 10, save_path: str = None):
+        self.gem.fine_tune(smiles, lr=lr, n_epochs=n_epochs, save_path=save_path)
+        self.finetuned = True
+        return
+
+    def generate(self, task: GenerationTask) -> list:
+        if task.mode == 'de_novo':
+            if self.finetuned:
+                print("GEM is finetuned. De novo generation is biased generation.")
+            return self.gem.generate(**task.config)
+        elif task.mode == 'biased_generation':
+            if not task.seed_smiles:
+                raise ValueError("'seed_smiles', list of SMILES for biasing, must be provided for this task.")
+            if not isinstance(task.seed_smiles, list):
+                task.seed_smiles = [task.seed_smiles]
+            self.gem.fine_tune(task.seed_smiles, lr=1e-5, n_epochs=10, save_path=None)
+            self.finetuned = True
+            return self.gem.generate(**task.config)
         else:
             raise NotImplementedError(f"GEM does not support the '{task.mode}' generation mode.")
-
 
 class FRAGGenerator(BaseGenerator):
     """
@@ -320,8 +328,6 @@ class FRAGGenerator(BaseGenerator):
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 
-
-# --- The Main Factory Function ---
 
 def GenerationModel(
     model_type: str,

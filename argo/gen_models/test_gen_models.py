@@ -21,7 +21,7 @@ def test_molmim_property_optimization():
     molmim = GenerationModel(model_type='molmim', api_token=api_key)
     task = GenerationTask(
         mode='property_optimization',
-        starting_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
+        seed_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
         objective="QED",
         config={
             "n_samples": 2,
@@ -42,7 +42,7 @@ def test_molmim_biased_generation():
     molmim = GenerationModel(model_type='molmim', api_token=api_key)
     task = GenerationTask(
         mode='biased_generation',
-        starting_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
+        seed_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
         config={
             "n_samples": 2,
         }
@@ -111,23 +111,34 @@ def test_safegpt():
     except Exception as e:
         print(f"SAFE-GPT Linker Generation test failed: {e}")
 
-def test_gem():
-    # Dummy data for testing
-    smiles = ["c1ccccc1", "CC(=O)Nc1ccc(O)cc1", "CN1C=NC2=C1C(=O)N(C)C(=O)N2C"]
-    labels = [-4.0, -4.0, -8.0]
-    # You must provide a valid model path for real tests
+def test_gem_de_novo():
     model_path = str(Path(__file__).parent / "pretrained" / "gem_chembl.pt")
     gem = GenerationModel(model_type='gem', model_path=model_path, use_cuda=use_cuda)
+
     task = GenerationTask(
-        mode='finetune_and_generate',
-        starting_smiles=smiles,
-        labels=labels,
+        mode='de_novo',
         config={
-            "tot_hits": 6,
-            "batch_size": 2,
-            "save_files": False,
-            "save_models": False,
-            "do_filter": False
+            "n_samples": 2,
+            "n_trials": 1
+        }
+    )
+    try:
+        result = gem.generate(task)
+        print("GEM result:")
+        print(result)
+    except Exception as e:
+        print(f"GEM test failed: {e}")
+
+def test_gem_biased_generation():
+    model_path = str(Path(__file__).parent / "pretrained" / "gem_chembl.pt")
+    gem = GenerationModel(model_type='gem', model_path=model_path, use_cuda=use_cuda)
+
+    task = GenerationTask(
+        mode='biased_generation',
+        seed_smiles="[H][C@@]12Cc3c[nH]c4cccc(C1=C[C@H](NC(=O)N(CC)CC)CN2C)c34",
+        config={
+            "n_samples": 2,
+            "n_trials": 1
         }
     )
     try:
@@ -181,7 +192,9 @@ if __name__ == "__main__":
     test_molmim_biased_generation()
     print("\nTesting SAFE-GPT...")
     test_safegpt()
-    print("\nTesting GEM...")
-    test_gem()
+    print("\nTesting GEM (de novo generation)...")
+    test_gem_de_novo()
+    print("\nTesting GEM (biased generation)...")
+    test_gem_biased_generation()
     print("\nTesting f-RAG...")
     test_f_rag() 
