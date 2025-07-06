@@ -21,7 +21,9 @@ from rdkit.Chem import AllChem
 from typing import Optional
 
 from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
-from argo.gen_models.f_rag.fusion.slicer import MolSlicer
+#from argo.gen_models.f_rag.fusion.slicer import MolSlicer
+from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
+from argo.frag_utils import SAFECodec
 import argo.gen_models.f_rag.ga.crossover as co
 from argo.gen_models.f_rag.ga.ga import reproduce
 
@@ -40,19 +42,15 @@ class f_RAG:
 
     def __init__(
         self,
+        injection_model_path: str,
         vocab_path: str,
-        results_path: str = 'output/frag_run_results.csv',
-        injection_model_path: Optional[str] = None,
         frag_population_size: int = 50,
         mol_population_size: int = 100,
-        num_safe_per_gen: int = 10,
-        num_ga_per_gen: int = 10,
         min_frag_size: int = 1,
         max_frag_size: int = 15,
         min_mol_size: int = 10,
-        max_mol_size: int = 50,
+        max_mol_size: int = 100,
         mutation_rate: float = 0.01,
-        seed: int = 42,
     ):
         """
         Initializes the f-RAG system with explicit parameters.
@@ -60,18 +58,14 @@ class f_RAG:
         print("Initializing f-RAG model...")
         # --- Store configuration as instance attributes ---
         self.vocab_path = vocab_path
-        self.results_path = results_path
         self.injection_model_path = injection_model_path
         self.frag_population_size = frag_population_size
         self.mol_population_size = mol_population_size
-        self.num_safe_per_gen = num_safe_per_gen
-        self.num_ga_per_gen = num_ga_per_gen
         self.min_frag_size = min_frag_size
         self.max_frag_size = max_frag_size
         self.min_mol_size = min_mol_size
         self.max_mol_size = max_mol_size
         self.mutation_rate = mutation_rate
-        self.seed = seed
         
         # --- Model and Tool Initialization ---
         self.designer = SAFEFusionDesign.load_default()
@@ -80,7 +74,8 @@ class f_RAG:
             self.designer.load_fuser(self.injection_model_path)
             print(f"Loaded custom fuser model from {self.injection_model_path}.")
 
-        self.slicer = MolSlicer(shortest_linker=True)
+        slicer = MolSlicerForSAFEEncoder(shortest_linker=True)
+        self.sfcodec = SAFECodec(slicer=slicer, ignore_stereo=True)
 
         # --- Population Initialization ---
         self.molecule_population = []
@@ -88,20 +83,26 @@ class f_RAG:
         self.linker_population = []
         self.set_initial_population(self.vocab_path)
 
+        # !!! TODO: Make sure population is up to frag_population_size
+        # Rewrite linker and arm population logic
+
+        if len(self.arm_population) < 2 and len(self.linker_population) < 1:
+            raise ValueError("Not enough fragments in the population to perform linker generation or motif extension. Please initialize the population with a valid vocabulary.")
+
         # --- Configuration Settings ---
         co.MIN_SIZE, co.MAX_SIZE = self.min_mol_size, self.max_mol_size
-        
-        self.output_filepath = self.results_path
-        output_dir = os.path.dirname(self.output_filepath)
-        if output_dir and not os.path.exists(output_dir):
-            os.makedirs(output_dir, exist_ok=True)
-        print(f"Results will be saved to: {self.output_filepath}")
+
+    '''
+    def prepare_attach(self, smiles):
+        smiles = re.sub(r'\[\*:\d+\]', '*', smiles)
+        return re.sub(r'\*', '[1*]', smiles)
 
     def attach(self, fragment_smiles_1, fragment_smiles_2):
         """Chemically joins two fragments together at their attachment points."""
         reaction = AllChem.ReactionFromSmarts('[*:1]-[1*].[1*]-[*:2]>>[*:1]-[*:2]')
         mol1 = Chem.MolFromSmiles(fragment_smiles_1)
         mol2 = Chem.MolFromSmiles(fragment_smiles_2)
+        print(f'Attaching {Chem.MolToSmiles(mol1)} and {Chem.MolToSmiles(mol2)}')
         products = reaction.RunReactants((mol1, mol2))
         random_product_idx = np.random.randint(len(products))
         return Chem.MolToSmiles(products[random_product_idx][0])
@@ -110,10 +111,34 @@ class f_RAG:
         """Breaks a molecule down into its constituent chemical fragments."""
         try:
             fragments = set()
-            for safe_fragment_mol in self.slicer(molecule_smiles):
+            for safe_fragment_mol in self.sfcodec.encode_fragment(molecule_smiles):
                 if safe_fragment_mol is None:
                     continue
                 fragment_smiles = Chem.MolToSmiles(safe_fragment_mol)
+                fragment_smiles = re.sub(r'\[\d+\*\]', '[1*]', fragment_smiles)
+                if fragment_smiles.count('*') in {1, 2}:
+                    fragments.add(fragment_smiles)
+            
+            valid_fragments = [
+                frag for frag in fragments
+                if self.min_frag_size <= Chem.MolFromSmiles(frag).GetNumAtoms() <= self.max_frag_size
+            ]
+            return valid_fragments
+        except Exception:
+            return None
+    '''
+
+    def fragmentize(self, molecule_smiles):
+        """Breaks a molecule down into its constituent chemical fragments."""
+        try:
+            fragments = set()
+            molecule_sf = self.sfcodec.encode(molecule_smiles)
+
+            if molecule_sf is None:
+                return None
+
+            for fragment_sf in molecule_sf.split('.'):
+                fragment_smiles = self.sfcodec.decode(fragment_sf)
                 fragment_smiles = re.sub(r'\[\d+\*\]', '[1*]', fragment_smiles)
                 if fragment_smiles.count('*') in {1, 2}:
                     fragments.add(fragment_smiles)
@@ -147,7 +172,7 @@ class f_RAG:
             if (len(self.arm_population) >= self.frag_population_size and
                 len(self.linker_population) >= self.frag_population_size):
                 break
-        
+
         self.arm_population = self.arm_population[:self.frag_population_size]
         self.linker_population = self.linker_population[:self.frag_population_size]
         print(f"Initialized with {len(self.arm_population)} arms and {len(self.linker_population)} linkers.")
@@ -178,23 +203,45 @@ class f_RAG:
         self.arm_population = self.arm_population[:self.frag_population_size]
         self.linker_population = self.linker_population[:self.frag_population_size]
 
-    def generate(self, num_to_generate):
+    def generate(self, num_to_generate, random_seed=42):
         """Generates new molecules using the deep learning model."""
         generated_molecules = []
         max_attempts, attempts = num_to_generate * 10, 0
+
+        can_gen_linker = len(self.arm_population) >= 2
+        can_gen_motif = len(self.linker_population) >= 1
+
+        if not can_gen_linker and not can_gen_motif:
+            print("Warning: Not enough fragments to perform linker generation or motif extension.")
+            return generated_molecules
+        elif not can_gen_linker:
+            print("Warning: Not enough arms in the population to perform linker generation. Defaulting to motif extension.")
+        elif not can_gen_motif:
+            print("Warning: Not enough linkers in the population to perform motif extension. Defaulting to linker generation.")
+
+        print(f'Generating {num_to_generate} molecules...')
         while len(generated_molecules) < num_to_generate and attempts < max_attempts:
             attempts += 1
             try:
-                if random.random() < 0.5:
+                if can_gen_linker and can_gen_motif:
+                    gen_linker = random.random() < 0.5
+                elif can_gen_linker:
+                    gen_linker = True
+                else:
+                    gen_linker = False
+
+                if gen_linker:
                     arm_frag_1, arm_frag_2 = random.sample([frag for _, frag in self.arm_population], 2)
+                    # Any post processing of fragments?
                     self.designer.frags = [frag for _, frag in self.linker_population]
-                    smiles = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=self.seed)[0]
+                    smiles = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=random_seed)[0]
                 else:
                     arm_frag = random.choice([frag for _, frag in self.arm_population])
                     linker_frag = random.choice([frag for _, frag in self.linker_population])
-                    motif = re.sub(r'\[1\*\]', '[*]', self.attach(arm_frag, linker_frag))
+                    motif = self.sfcodec.link_fragments(arm_frag, linker_frag) # SMILES
+                    #motif = self.attach(arm_frag, linker_frag)
                     self.designer.frags = [frag for _, frag in self.arm_population]
-                    smiles = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=self.seed)[0]
+                    smiles = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=random_seed)[0]
                     smiles = sorted(smiles.split('.'), key=len)[-1]
                 
                 if hasattr(self.designer, 'decode'):
@@ -202,12 +249,15 @@ class f_RAG:
                 mol = Chem.MolFromSmiles(smiles)
                 if mol and self.min_mol_size <= mol.GetNumAtoms() <= self.max_mol_size:
                     generated_molecules.append(smiles)
-            except Exception:
+            except Exception as e:
+                print(f'Error during generation: {e}')
                 continue
         return generated_molecules
 
+    '''
     def record(self, molecule_smiles_list, scores):
         """Appends molecules and their scores to the output CSV file."""
         with open(self.output_filepath, 'a', newline='') as f:
             for smiles, score in zip(molecule_smiles_list, scores):
                 f.write(f'"{smiles}",{score}\n')
+    '''

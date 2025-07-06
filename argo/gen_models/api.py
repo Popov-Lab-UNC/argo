@@ -283,48 +283,26 @@ class FRAGGenerator(BaseGenerator):
     """
     Interface for the f-RAG model, an evolutionary algorithm for de novo design.
     """
-    def __init__(self, vocab_path: str, **kwargs):
+    def __init__(self, injection_model_path: str = None, vocab_path: str = None, frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01):
         super().__init__()
-        # The backend f_RAG class is initialized with all keyword arguments
-        self._backend = f_RAG(vocab_path=vocab_path, **kwargs)
-        # Store necessary parameters for the run_optimization method
-        self.num_safe_per_gen = self._backend.num_safe_per_gen
-        self.num_ga_per_gen = self._backend.num_ga_per_gen
-        self.mutation_rate = self._backend.mutation_rate
+        self.frag = f_RAG(
+            injection_model_path=injection_model_path,
+            vocab_path=vocab_path,
+            frag_population_size=frag_population_size,
+            mol_population_size=mol_population_size,
+            min_frag_size=min_frag_size,
+            max_frag_size=max_frag_size,
+            min_mol_size=min_mol_size,
+            max_mol_size=max_mol_size,
+            mutation_rate=mutation_rate
+        )
 
-    def run_optimization(self, objective_fn: Callable[[List[str]], List[float]], num_generations: int = 10) -> pd.DataFrame:
-        """Runs the full f-RAG evolutionary optimization loop."""
-        print("--- Starting f-RAG Generative Process ---")
-        all_results = []
-        for generation in range(num_generations):
-            print(f"\n>> Generation {generation + 1}/{num_generations}")
-
-            safe_smiles = self._backend.generate(num_to_generate=self.num_safe_per_gen)
-            ga_smiles = []
-            if len(self._backend.molecule_population) > 0:
-                 ga_smiles = [self._backend.reproduce(self._backend.molecule_population, self.mutation_rate) for _ in range(self.num_ga_per_gen)]
-
-            new_smiles = list(filter(None, safe_smiles + ga_smiles))
-            if not new_smiles:
-                print("No valid molecules were generated. Skipping generation.")
-                continue
-
-            scores = objective_fn(new_smiles)
-            all_results.extend(zip(new_smiles, scores))
-            self._backend.update_population(scores, new_smiles)
-
-            if self._backend.molecule_population:
-                best_score, best_smiles = self._backend.molecule_population[0]
-                print(f"Current best molecule: {best_smiles} (Score: {best_score:.4f})")
-
-        print("\n--- f-RAG Process Finished ---")
-        return pd.DataFrame(all_results, columns=['smiles', 'score']).sort_values(by='score', ascending=False)
-
-    def generate(self, task: GenerationTask) -> pd.DataFrame:
+    def generate(self, task: GenerationTask) -> list:
         if task.mode == 'property_optimization':
-            if not callable(task.objective):
-                raise ValueError("A callable 'objective' function must be provided for this task.")
-            return self.run_optimization(objective_fn=task.objective, **task.config)
+            config = task.config or {}
+            num_to_generate = config.get('num_to_generate', 10)
+            random_seed = config.get('random_seed', 42)
+            return self.frag.generate(num_to_generate=num_to_generate, random_seed=random_seed)
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 

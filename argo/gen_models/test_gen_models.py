@@ -150,51 +150,43 @@ def test_gem_biased_generation():
 
 def test_f_rag():
     # Use the provided vocab file
-    vocab_path = str(Path(__file__).parent / "f_rag" / "my_fragment_vocab.csv")
-    # Simple QED objective function
-    def evaluate_qed(smiles_list):
-        scores = []
-        for smiles in smiles_list:
-            try:
-                mol = Chem.MolFromSmiles(smiles)
-                scores.append(float(QED.qed(mol)) if mol else -1.0)
-            except Exception:
-                scores.append(-1.0)
-        return scores
-    
+    vocab_path = str(Path(__file__).parent / "f_rag" / "example_vocab.csv")
     f_rag = GenerationModel(
         model_type='f-rag',
         vocab_path=vocab_path,
-        results_path=str(Path(__file__).parent / "f_rag" / "output" / "frag_test_results.csv"),
+        injection_model_path="pretrained/model.safetensors",
+        frag_population_size=10,
         mol_population_size=20,
-        num_safe_per_gen=3,
-        num_ga_per_gen=2,
-        seed=42
+        min_frag_size=1,
+        max_frag_size=15,
+        min_mol_size=10,
+        max_mol_size=100,
+        mutation_rate=0.01
     )
     task = GenerationTask(
         mode='property_optimization',
-        objective=evaluate_qed,
         config={
-            "num_generations": 2
+            "num_to_generate": 5,
+            "random_seed": 42
         }
     )
     try:
         result = f_rag.generate(task)
-        print("f-RAG result:")
+        print("f-RAG generated SMILES:")
         print(result)
     except Exception as e:
         print(f"f-RAG test failed: {e}")
 
 if __name__ == "__main__":
     print("\nTesting MolMiM (property optimization)...")
-    test_molmim_property_optimization()
+    #test_molmim_property_optimization()
     print("\nTesting MolMiM (biased generation)...")
-    test_molmim_biased_generation()
+    #test_molmim_biased_generation()
     print("\nTesting SAFE-GPT...")
-    test_safegpt()
+    #test_safegpt()
     print("\nTesting GEM (de novo generation)...")
-    test_gem_de_novo()
+    #test_gem_de_novo()
     print("\nTesting GEM (biased generation)...")
-    test_gem_biased_generation()
+    #test_gem_biased_generation()
     print("\nTesting f-RAG...")
     test_f_rag() 
