@@ -20,6 +20,8 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from typing import Optional
 
+from tdc import Oracle
+
 from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicer
 from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
@@ -58,6 +60,8 @@ class f_RAG:
         """
         print("Initializing f-RAG model...")
         # --- Store configuration as instance attributes ---
+        if frag_population_size < 10:
+            raise ValueError("frag_population_size must be at least 10.")
         self.vocab_path = vocab_path
         self.injection_model_path = injection_model_path
         self.frag_population_size = frag_population_size
@@ -84,11 +88,9 @@ class f_RAG:
         self.linker_population = []
         self.set_initial_population(self.vocab_path)
 
-        # !!! TODO: Make sure population is up to frag_population_size
-        # Rewrite linker and arm population logic
-
-        if len(self.arm_population) < 2 and len(self.linker_population) < 1:
-            raise ValueError("Not enough fragments in the population to perform linker generation or motif extension. Please initialize the population with a valid vocabulary.")
+        # Check for minimum arms and linkers
+        if len(self.arm_population) < 10 or len(self.linker_population) < 10:
+            raise ValueError(f"Initialization failed: Need at least 10 arms and 10 linkers, got {len(self.arm_population)} arms and {len(self.linker_population)} linkers.")
 
         # --- Configuration Settings ---
         co.MIN_SIZE, co.MAX_SIZE = self.min_mol_size, self.max_mol_size
@@ -216,54 +218,57 @@ class f_RAG:
         self.arm_population = self.arm_population[:self.frag_population_size]
         self.linker_population = self.linker_population[:self.frag_population_size]
 
-    def generate(self, n_samples, random_seed=42):
-        """Generates new molecules using the deep learning model."""
+    def linker_generation(self, n_samples=5, random_seed=42):
+        """
+        Generates molecules by connecting two randomly selected arms using a linker.
+        """
         generated_molecules = []
         max_attempts, attempts = n_samples * 10, 0
 
-        can_gen_linker = len(self.arm_population) >= 2
-        can_gen_motif = len(self.linker_population) >= 1
-
-        if not can_gen_linker and not can_gen_motif:
-            print("Warning: Not enough fragments to perform linker generation or motif extension.")
-            return generated_molecules
-        elif not can_gen_linker:
-            print("Warning: Not enough arms in the population to perform linker generation. Defaulting to motif extension.")
-        elif not can_gen_motif:
-            print("Warning: Not enough linkers in the population to perform motif extension. Defaulting to linker generation.")
-
-        print(f'Generating {n_samples} molecules...')
+        print(f'Generating {n_samples} molecules by linker generation...')
         while len(generated_molecules) < n_samples and attempts < max_attempts:
             attempts += 1
             try:
-                if can_gen_linker and can_gen_motif:
-                    gen_linker = random.random() < 0.5
-                elif can_gen_linker:
-                    gen_linker = True
-                else:
-                    gen_linker = False
-
-                if gen_linker:
-                    arm_frag_1, arm_frag_2 = random.sample([frag for _, frag in self.arm_population], 2)
-                    # Any post processing of fragments?
-                    self.designer.frags = [frag for _, frag in self.linker_population]
-                    smiles = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=random_seed)[0]
-                else:
-                    arm_frag = random.choice([frag for _, frag in self.arm_population])
-                    linker_frag = random.choice([frag for _, frag in self.linker_population])
-                    motif = self.sfcodec.link_fragments(arm_frag, linker_frag) # SMILES
-                    #motif = self.attach(arm_frag, linker_frag)
-                    self.designer.frags = [frag for _, frag in self.arm_population]
-                    smiles = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=random_seed)[0]
-                    smiles = sorted(smiles.split('.'), key=len)[-1]
-                
+                arm_frag_1, arm_frag_2 = random.sample([frag for _, frag in self.arm_population], 2)
+                self.designer.frags = [frag for _, frag in self.linker_population]
+                smiles = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=random_seed)[0]
                 if hasattr(self.designer, 'decode'):
                     smiles = self.designer.decode(smiles)
                 mol = Chem.MolFromSmiles(smiles)
                 if mol and self.min_mol_size <= mol.GetNumAtoms() <= self.max_mol_size:
                     generated_molecules.append(smiles)
             except Exception as e:
-                print(f'Error during generation: {e}')
+                print(f'Error during linker generation: {e}')
+                continue
+        return generated_molecules
+
+    def scaffold_decoration(self, scaffold=None, n_samples=5, random_seed=42):
+        """
+        Generates molecules by extending a motif (arm + linker) with additional arms.
+        """
+        generated_molecules = []
+        max_attempts, attempts = n_samples * 10, 0
+        
+        print(f'Generating {n_samples} molecules by scaffold decoration...')
+        while len(generated_molecules) < n_samples and attempts < max_attempts:
+            attempts += 1
+            try:
+                arm_frag = random.choice([frag for _, frag in self.arm_population])
+                if scaffold:
+                    linker_frag = scaffold
+                else:
+                    linker_frag = random.choice([frag for _, frag in self.linker_population])
+                motif = self.sfcodec.link_fragments(arm_frag, linker_frag)
+                self.designer.frags = [frag for _, frag in self.arm_population]
+                smiles = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=random_seed)[0]
+                smiles = sorted(smiles.split('.'), key=len)[-1]
+                if hasattr(self.designer, 'decode'):
+                    smiles = self.designer.decode(smiles)
+                mol = Chem.MolFromSmiles(smiles)
+                if mol and self.min_mol_size <= mol.GetNumAtoms() <= self.max_mol_size:
+                    generated_molecules.append(smiles)
+            except Exception as e:
+                print(f'Error during scaffold decoration: {e}')
                 continue
         return generated_molecules
 
@@ -274,3 +279,24 @@ class f_RAG:
             for smiles, score in zip(molecule_smiles_list, scores):
                 f.write(f'"{smiles}",{score}\n')
     '''
+
+    def optimize(self, oracle_name):
+        # assert oracle is in ['QED', 'SA', 'LogP']
+        tdc_oracle = Oracle(name=oracle_name)
+        while True:
+            # SAFE-GPT generation
+            safe_smiles_list = [self.generate() for _ in range(self.args.num_safe)]
+            safe_prop_list = tdc_oracle(safe_smiles_list)
+            self.update_population(safe_prop_list, safe_smiles_list)
+
+            # GA generation
+            if len(self.mol_population) == self.args.mol_population_size:
+                ga_smiles_list = [reproduce(self.mol_population, self.args.mutation_rate)
+                                  for _ in range(self.args.num_ga)]
+                ga_prop_list = tdc_oracle(ga_smiles_list)
+                self.update_population(ga_prop_list, ga_smiles_list)
+
+            if tdc_oracle.finish:
+                break
+
+        return self.molecule_population

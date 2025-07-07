@@ -155,7 +155,7 @@ def test_f_rag():
         model_type='f-rag',
         vocab_path=vocab_path,
         injection_model_path="pretrained/model.safetensors",
-        frag_population_size=10,
+        frag_population_size=15,
         mol_population_size=20,
         min_frag_size=1,
         max_frag_size=15,
