@@ -43,7 +43,7 @@ class f_RAG:
     def __init__(
         self,
         injection_model_path: str,
-        vocab_path: str,
+        vocab_path: "str | pd.DataFrame",
         frag_population_size: int = 50,
         mol_population_size: int = 100,
         min_frag_size: int = 1,
@@ -54,6 +54,7 @@ class f_RAG:
     ):
         """
         Initializes the f-RAG system with explicit parameters.
+        vocab_path can be a path to a CSV file or a pandas DataFrame.
         """
         print("Initializing f-RAG model...")
         # --- Store configuration as instance attributes ---
@@ -151,14 +152,26 @@ class f_RAG:
         except Exception:
             return None
 
-    def set_initial_population(self, vocabulary_path):
-        """Loads the initial fragment populations from a CSV file."""
-        print(f"Loading initial fragment vocabulary from {vocabulary_path}...")
-        try:
-            vocabulary_df = pd.read_csv(vocabulary_path)
-        except FileNotFoundError:
-            print(f"Error: Vocabulary file not found at {vocabulary_path}. Cannot set initial population.")
+    def set_initial_population(self, vocabulary):
+        """Loads the initial fragment populations from a CSV file or DataFrame."""
+        if isinstance(vocabulary, str):
+            print(f"Loading initial fragment vocabulary from {vocabulary}...")
+            try:
+                vocabulary_df = pd.read_csv(vocabulary)
+            except FileNotFoundError:
+                print(f"Error: Vocabulary file not found at {vocabulary}. Cannot set initial population.")
+                return
+        elif isinstance(vocabulary, pd.DataFrame):
+            print("Loading initial fragment vocabulary from provided DataFrame...")
+            vocabulary_df = vocabulary.copy()
+        else:
+            print("Error: vocabulary must be a file path or a pandas DataFrame.")
             return
+
+        # Ensure required columns exist
+        required_columns = {'frag', 'size'}
+        if not required_columns.issubset(vocabulary_df.columns):
+            raise ValueError(f"Vocabulary DataFrame must contain columns: {required_columns}. Found: {set(vocabulary_df.columns)}")
 
         vocabulary_df = vocabulary_df[vocabulary_df['size'] >= self.min_frag_size]
         vocabulary_df = vocabulary_df[vocabulary_df['size'] <= self.max_frag_size]
@@ -203,10 +216,10 @@ class f_RAG:
         self.arm_population = self.arm_population[:self.frag_population_size]
         self.linker_population = self.linker_population[:self.frag_population_size]
 
-    def generate(self, num_to_generate, random_seed=42):
+    def generate(self, n_samples, random_seed=42):
         """Generates new molecules using the deep learning model."""
         generated_molecules = []
-        max_attempts, attempts = num_to_generate * 10, 0
+        max_attempts, attempts = n_samples * 10, 0
 
         can_gen_linker = len(self.arm_population) >= 2
         can_gen_motif = len(self.linker_population) >= 1
@@ -219,8 +232,8 @@ class f_RAG:
         elif not can_gen_motif:
             print("Warning: Not enough linkers in the population to perform motif extension. Defaulting to linker generation.")
 
-        print(f'Generating {num_to_generate} molecules...')
-        while len(generated_molecules) < num_to_generate and attempts < max_attempts:
+        print(f'Generating {n_samples} molecules...')
+        while len(generated_molecules) < n_samples and attempts < max_attempts:
             attempts += 1
             try:
                 if can_gen_linker and can_gen_motif:

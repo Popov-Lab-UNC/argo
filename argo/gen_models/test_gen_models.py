@@ -166,7 +166,7 @@ def test_f_rag():
     task = GenerationTask(
         mode='property_optimization',
         config={
-            "num_to_generate": 5,
+            "n_samples": 5,
             "random_seed": 42
         }
     )
