@@ -10,7 +10,8 @@ class SAFECodec:
     def __init__(self, 
                  slicer: Optional[Union[List[str], str, Callable]] = None, 
                  require_hs: Optional[bool] = False, 
-                 ignore_stereo: bool = False
+                 ignore_stereo: bool = False,
+                 verbose: bool = False
     ):
         """
         SAFE processor with encoder/decoder instances
@@ -22,6 +23,7 @@ class SAFECodec:
             require_hs (bool): whether the slicing algorithm require the molecule to have hydrogen explictly added
             ignore_stereo (bool): whether to remove stereochemistry before fragmenting
         """
+        self.verbose = verbose
         # Encoder converter with custom parameters
         self.encoder_conv = SAFEConverter(
             slicer=slicer,
@@ -37,7 +39,8 @@ class SAFECodec:
         try:
             return self.encoder_conv.encoder(inp, canonical=canonical)
         except Exception as e:
-            print(f"Unable to encode: {e}.")
+            if self.verbose:
+                print(f"Unable to encode: {e}.")
             return None
         
     def encode_fragment(self, inp: Union[str, dm.Mol]):

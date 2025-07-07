@@ -35,7 +35,7 @@ class GenerationTask:
     # Inputs for different modes
     scaffold: Optional[str] = None
     fragments: Optional[List[str]] = None
-    # For MolMiM
+    # For MolMiM and GEM
     seed_smiles: Optional[Union[str, List[str]]] = None
     labels: Optional[List[float]] = None
     # For optimization tasks
@@ -279,13 +279,13 @@ class GEMGenerator(BaseGenerator):
         else:
             raise NotImplementedError(f"GEM does not support the '{task.mode}' generation mode.")
 
-class FRAGGenerator(BaseGenerator):
+class F_RAGGenerator(BaseGenerator):
     """
     Interface for the f-RAG model, an evolutionary algorithm for de novo design.
     """
-    def __init__(self, injection_model_path: str = None, vocab_path: str = None, frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01):
+    def __init__(self, injection_model_path: str = None, vocab_path: "str | pd.DataFrame" = None, frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01):
         super().__init__()
-        self.frag = f_RAG(
+        self.f_rag = f_RAG(
             injection_model_path=injection_model_path,
             vocab_path=vocab_path,
             frag_population_size=frag_population_size,
@@ -298,16 +298,25 @@ class FRAGGenerator(BaseGenerator):
         )
 
     def generate(self, task: GenerationTask) -> list:
-        if task.mode == 'property_optimization':
+        if task.mode == "linker_generation":
             config = task.config or {}
-            num_to_generate = config.get('num_to_generate', 10)
+            n_samples = config.get('n_samples', 10)
             random_seed = config.get('random_seed', 42)
-            return self.frag.generate(num_to_generate=num_to_generate, random_seed=random_seed)
+            return self.f_rag.linker_generation(n_samples=n_samples, random_seed=random_seed)
+        elif task.mode == "scaffold_decoration":
+            config = task.config or {}
+            scaffold = config.get('scaffold', None)
+            n_samples = config.get('n_samples', 10)
+            random_seed = config.get('random_seed', 42)
+            return self.f_rag.scaffold_decoration(scaffold=scaffold, n_samples=n_samples, random_seed=random_seed)
+        elif task.mode == "property_optimization":
+            objective = task.objective
+            return self.f_rag.optimize(oracle_name=objective)
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 
 
-def GenerationModel(
+def GenerationModel( 
     model_type: str,
     **kwargs: Any
 ) -> BaseGenerator:
@@ -321,7 +330,7 @@ def GenerationModel(
                   - for 'safegpt': model_path (optional), use_cuda (optional)
                   - for 'molmim': api_token (required)
                   - for 'gem': model_path (required), use_cuda (optional), finetuned (optional)
-                  - for 'f-rag': vocab_path (required), and other population/size params.
+                  - for 'f-rag': vocab_path (str or pd.DataFrame, required), and other population/size params.
     
     Returns:
         An instance of the appropriate generator class.
@@ -334,6 +343,6 @@ def GenerationModel(
     if model_type == 'gem':
         return GEMGenerator(**kwargs)
     if model_type == 'f-rag':
-        return FRAGGenerator(**kwargs)
+        return F_RAGGenerator(**kwargs)
     
     raise ValueError(f"Unknown model type: {model_type}. Must be one of ['safegpt', 'molmim', 'gem', 'f-rag']")

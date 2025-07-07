@@ -142,7 +142,7 @@ class f_RAG:
 
             for fragment_sf in molecule_sf.split('.'):
                 fragment_smiles = self.sfcodec.decode(fragment_sf)
-                fragment_smiles = re.sub(r'\[\d+\*\]', '[1*]', fragment_smiles)
+                #fragment_smiles = re.sub(r'\[\d+\*\]', '[1*]', fragment_smiles)
                 if fragment_smiles.count('*') in {1, 2}:
                     fragments.add(fragment_smiles)
             
