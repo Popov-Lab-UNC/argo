@@ -10,9 +10,10 @@ import torch
 
 # 1. Load docking score CSV
 df = pd.read_csv('CHD1_score0.csv')
+lower_is_better = True
 
 # 2. Sort by score (ascending: best first)
-df = df.sort_values('score', ascending=True)
+df = df.sort_values('score', ascending=lower_is_better)
 
 # 3-5. Craft fragment vocabulary using the new class
 vocab = FragmentVocabulary(
@@ -20,12 +21,12 @@ vocab = FragmentVocabulary(
     smiles_col='smiles',
     score_col='score',
     scoring_method='average',  # or 'enrichment'
-    top_percent=10.0,  # only used for enrichment scoring
     min_frag_size=5,
     max_frag_size=30,
-    min_count=1,
-    max_fragments=None,
-    verbose=True
+    min_count=5,
+    max_fragments=1000,
+    verbose=False,
+    lower_is_better=lower_is_better
 )
 
 # Save the vocabulary
