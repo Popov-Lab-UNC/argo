@@ -310,8 +310,9 @@ class F_RAGGenerator(BaseGenerator):
             random_seed = config.get('random_seed', 42)
             return self.f_rag.scaffold_decoration(scaffold=scaffold, n_samples=n_samples, random_seed=random_seed)
         elif task.mode == "property_optimization":
-            objective = task.objective
-            return self.f_rag.optimize(oracle_name=objective)
+            if not task.objective:
+                raise ValueError("'objective' must be provided for this task.")
+            return self.f_rag.optimize(oracle_name=task.objective)
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 

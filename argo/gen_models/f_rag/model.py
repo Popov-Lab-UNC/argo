@@ -24,7 +24,7 @@ from tdc import Oracle
 
 from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicer
-from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
+#from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
 from argo.frag_utils import SAFECodec
 import argo.gen_models.f_rag.ga.crossover as co
 from argo.gen_models.f_rag.ga.ga import reproduce
@@ -79,8 +79,8 @@ class f_RAG:
             self.designer.load_fuser(self.injection_model_path)
             print(f"Loaded custom fuser model from {self.injection_model_path}.")
 
-        slicer = MolSlicerForSAFEEncoder(shortest_linker=True)
-        self.sfcodec = SAFECodec(slicer=slicer, ignore_stereo=True)
+        #slicer = MolSlicerForSAFEEncoder(shortest_linker=True)
+        self.sfcodec = SAFECodec(slicer='f-rag', ignore_stereo=True)
 
         # --- Population Initialization ---
         self.molecule_population = []
@@ -166,8 +166,16 @@ class f_RAG:
         elif isinstance(vocabulary, pd.DataFrame):
             print("Loading initial fragment vocabulary from provided DataFrame...")
             vocabulary_df = vocabulary.copy()
+        elif hasattr(vocabulary, 'to_dataframe'):
+            # Handle FragmentVocabulary class
+            print("Loading initial fragment vocabulary from FragmentVocabulary object...")
+            vocabulary_df = vocabulary.to_dataframe()
+        elif hasattr(vocabulary, 'craft_vocabulary'):
+            # Handle FragmentVocabulary class (alternative method)
+            print("Loading initial fragment vocabulary from FragmentVocabulary object...")
+            vocabulary_df = vocabulary.craft_vocabulary()
         else:
-            print("Error: vocabulary must be a file path or a pandas DataFrame.")
+            print("Error: vocabulary must be a file path, pandas DataFrame, or FragmentVocabulary object.")
             return
 
         # Ensure required columns exist
@@ -231,9 +239,10 @@ class f_RAG:
             try:
                 arm_frag_1, arm_frag_2 = random.sample([frag for _, frag in self.arm_population], 2)
                 self.designer.frags = [frag for _, frag in self.linker_population]
-                smiles = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=random_seed)[0]
-                if hasattr(self.designer, 'decode'):
-                    smiles = self.designer.decode(smiles)
+                designs = self.designer.linker_generation(arm_frag_1, arm_frag_2, n_samples_per_trial=1, random_seed=random_seed)
+                if len(designs) == 0:
+                    continue
+                smiles = self.sfcodec.decode(designs[0])
                 mol = Chem.MolFromSmiles(smiles)
                 if mol and self.min_mol_size <= mol.GetNumAtoms() <= self.max_mol_size:
                     generated_molecules.append(smiles)
@@ -260,10 +269,10 @@ class f_RAG:
                     linker_frag = random.choice([frag for _, frag in self.linker_population])
                 motif = self.sfcodec.link_fragments(arm_frag, linker_frag)
                 self.designer.frags = [frag for _, frag in self.arm_population]
-                smiles = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=random_seed)[0]
-                smiles = sorted(smiles.split('.'), key=len)[-1]
-                if hasattr(self.designer, 'decode'):
-                    smiles = self.designer.decode(smiles)
+                designs = self.designer.motif_extension(motif, n_samples_per_trial=1, random_seed=random_seed)
+                if len(designs) == 0 or designs[0] == None:
+                    continue
+                smiles = self.sfcodec.decode(sorted(designs[0].split('.'), key=len)[-1])
                 mol = Chem.MolFromSmiles(smiles)
                 if mol and self.min_mol_size <= mol.GetNumAtoms() <= self.max_mol_size:
                     generated_molecules.append(smiles)
@@ -283,6 +292,7 @@ class f_RAG:
     def optimize(self, oracle_name):
         # assert oracle is in ['QED', 'SA', 'LogP']
         tdc_oracle = Oracle(name=oracle_name)
+        print(f'Optimizing with {oracle_name}...')
         while True:
             # SAFE-GPT generation
             safe_smiles_list = [self.generate() for _ in range(self.args.num_safe)]

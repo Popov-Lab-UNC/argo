@@ -164,7 +164,7 @@ def test_f_rag():
         mutation_rate=0.01
     )
     task = GenerationTask(
-        mode='property_optimization',
+        mode='scaffold_decoration',
         config={
             "n_samples": 5,
             "random_seed": 42
