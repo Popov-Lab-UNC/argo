@@ -8,6 +8,14 @@ import torch
 import time
 from typing import List, Dict, Any
 
+# Load environment variables from .env file
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    print("Warning: python-dotenv not installed. Install with: pip install python-dotenv")
+    print("Make sure your MOLMIM_API_KEY is set in your environment or .env file")
+
 # 1. Load docking score CSV
 df = pd.read_csv('CHD1_score0.csv')
 lower_is_better = True
@@ -15,6 +23,7 @@ lower_is_better = True
 # 2. Sort by score (ascending: best first)
 df = df.sort_values('score', ascending=lower_is_better)
 
+'''
 # 3-5. Create fragment vocabulary using the new class with enrichment scoring
 vocab = FragmentVocabulary(
     data='CHD1_score0.csv',
@@ -34,6 +43,9 @@ print('Fragment statistics written to fragment_scores.csv')
 
 vocab.save_state('fragment_scores_init.pt')
 print('Fragment state written to fragment_scores_init.pt')
+'''
+
+vocab = FragmentVocabulary.load_state('fragment_scores_init.pt')
 
 # 6. Instantiate all four generative models via the API
 use_cuda = torch.cuda.is_available()
@@ -42,9 +54,9 @@ api_key = os.environ.get("MOLMIM_API_KEY")
 molmim_model = GenerationModel('molmim', api_token=api_key)
 gem_model = GenerationModel('gem', model_path='argo/gen_models/pretrained/gem_chembl.pt', use_cuda=use_cuda)
 
-# Use the vocabulary object directly with f-RAG
+# Use the vocabulary DataFrame directly with f-RAG
 f_rag_model = GenerationModel('f-rag', 
-                              vocab=vocab,
+                              vocab=vocab.get_vocab(),
                               injection_model_path="argo/gen_models/pretrained/model.safetensors",
                               frag_population_size=500,
                               mol_population_size=200,

@@ -18,9 +18,6 @@ warnings.filterwarnings("ignore", category=UserWarning, module="transformers.gen
 from argo.gen_models.f_rag.model import f_RAG
 from argo.gen_models.gem.model import GEM
 
-# Fragment vocabulary imports
-from argo.vocab import FragmentVocabulary
-
 # --- A structured way to define a generation task ---
 @dataclass
 class GenerationTask:
@@ -286,7 +283,7 @@ class F_RAGGenerator(BaseGenerator):
     """
     Interface for the f-RAG model, an evolutionary algorithm for de novo design.
     """
-    def __init__(self, injection_model_path: str, vocab: "str | pd.DataFrame | FragmentVocabulary", frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01, use_cuda: bool = True):
+    def __init__(self, injection_model_path: str, vocab: "str | pd.DataFrame", frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01, use_cuda: bool = True):
         super().__init__(use_cuda=use_cuda)
         self.f_rag = f_RAG(
             injection_model_path=injection_model_path,
@@ -335,7 +332,7 @@ def GenerationModel(
                   - for 'safegpt': model_path (optional), use_cuda (optional)
                   - for 'molmim': api_token (required)
                   - for 'gem': model_path (required), use_cuda (optional), finetuned (optional)
-                  - for 'f-rag': injection_model_path (required), vocab (str, pd.DataFrame, or FragmentVocabulary, required), use_cuda (optional), and other population/size params.
+                  - for 'f-rag': injection_model_path (required), vocab (str or pd.DataFrame, required), use_cuda (optional), and other population/size params.
     
     Returns:
         An instance of the appropriate generator class.

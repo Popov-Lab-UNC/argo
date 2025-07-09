@@ -23,12 +23,12 @@ class FragmentVocabulary:
     Usage:
         # Basic usage
         vocab = FragmentVocabulary('scores.csv')
-        df = vocab.to_dataframe()
+        df = vocab.get_vocab()
         
         # Add more data and rescore
         vocab.add('new_scores.csv')
         vocab.rescore(scoring_method='enrichment', top_percent=5.0)
-        df2 = vocab.to_dataframe()
+        df2 = vocab.get_vocab()
         
         # Save complete state (includes original data and fragment statistics)
         vocab.save_state('complete_vocab.pkl')
@@ -136,8 +136,8 @@ class FragmentVocabulary:
         self._vocab_df = self._score_fragments()
         return self._vocab_df
 
-    def to_dataframe(self) -> pd.DataFrame:
-        """Return the vocabulary as a DataFrame."""
+    def get_vocab(self) -> pd.DataFrame:
+        """Return the fragment vocabulary data as a DataFrame."""
         return self._vocab_df
 
     def get_data(self) -> pd.DataFrame:
@@ -150,12 +150,6 @@ class FragmentVocabulary:
     def get_params(self) -> Dict[str, Any]:
         """Return the parameters used for the last vocabulary calculation."""
         return self._params
-
-    def reset_stats(self):
-        """Reset fragment statistics to start fresh."""
-        self._frag_counts.clear()
-        self._frag_score_sum.clear()
-        self._frag_molecules.clear()
 
     def __len__(self) -> int:
         return len(self._vocab_df)

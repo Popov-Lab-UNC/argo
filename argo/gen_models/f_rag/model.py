@@ -26,7 +26,7 @@ from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicer
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
 from argo.frag_utils import SAFECodec
-from argo.vocab import FragmentVocabulary
+
 import argo.gen_models.f_rag.ga.crossover as co
 from argo.gen_models.f_rag.ga.ga import reproduce
 
@@ -46,7 +46,7 @@ class f_RAG:
     def __init__(
         self,
         injection_model_path: str,
-        vocab: "str | pd.DataFrame | FragmentVocabulary",
+        vocab: "str | pd.DataFrame",
         frag_population_size: int = 50,
         mol_population_size: int = 100,
         min_frag_size: int = 1,
@@ -58,11 +58,11 @@ class f_RAG:
     ):
         """
         Initializes the f-RAG system with explicit parameters.
-        vocab_path can be a path to a CSV file, a pandas DataFrame, or a FragmentVocabulary object.
+        vocab can be a path to a CSV file or a pandas DataFrame.
         
         Args:
             injection_model_path: Path to the injection model
-            vocab: Vocabulary data (path, DataFrame, or FragmentVocabulary object)
+            vocab: Vocabulary data (path or DataFrame)
             frag_population_size: Size of fragment populations
             mol_population_size: Size of molecule population
             min_frag_size: Minimum fragment size
@@ -181,16 +181,8 @@ class f_RAG:
         elif isinstance(vocabulary, pd.DataFrame):
             print("Loading initial fragment vocabulary from provided DataFrame...")
             vocabulary_df = vocabulary.copy()
-        elif isinstance(vocabulary, FragmentVocabulary):
-            # Handle FragmentVocabulary class
-            print("Loading initial fragment vocabulary from FragmentVocabulary object...")
-            vocabulary_df = vocabulary.to_dataframe()
-        elif hasattr(vocabulary, 'craft_vocabulary'):
-            # Handle FragmentVocabulary class (alternative method)
-            print("Loading initial fragment vocabulary from FragmentVocabulary object...")
-            vocabulary_df = vocabulary.craft_vocabulary()
         else:
-            print("Error: vocabulary must be a file path, pandas DataFrame, or FragmentVocabulary object.")
+            print("Error: vocabulary must be a file path or pandas DataFrame.")
             return
 
         # Ensure required columns exist
