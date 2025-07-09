@@ -26,6 +26,7 @@ from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicer
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicerForSAFEEncoder
 from argo.frag_utils import SAFECodec
+from argo.vocab import FragmentVocabulary
 import argo.gen_models.f_rag.ga.crossover as co
 from argo.gen_models.f_rag.ga.ga import reproduce
 
@@ -45,7 +46,7 @@ class f_RAG:
     def __init__(
         self,
         injection_model_path: str,
-        vocab_path: "str | pd.DataFrame",
+        vocab: "str | pd.DataFrame | FragmentVocabulary",
         frag_population_size: int = 50,
         mol_population_size: int = 100,
         min_frag_size: int = 1,
@@ -53,16 +54,29 @@ class f_RAG:
         min_mol_size: int = 10,
         max_mol_size: int = 100,
         mutation_rate: float = 0.01,
+        use_cuda: bool = True,
     ):
         """
         Initializes the f-RAG system with explicit parameters.
-        vocab_path can be a path to a CSV file or a pandas DataFrame.
+        vocab_path can be a path to a CSV file, a pandas DataFrame, or a FragmentVocabulary object.
+        
+        Args:
+            injection_model_path: Path to the injection model
+            vocab: Vocabulary data (path, DataFrame, or FragmentVocabulary object)
+            frag_population_size: Size of fragment populations
+            mol_population_size: Size of molecule population
+            min_frag_size: Minimum fragment size
+            max_frag_size: Maximum fragment size
+            min_mol_size: Minimum molecule size
+            max_mol_size: Maximum molecule size
+            mutation_rate: Mutation rate for genetic algorithm
+            use_cuda: Whether to use CUDA if available (default: True)
         """
         print("Initializing f-RAG model...")
         # --- Store configuration as instance attributes ---
         if frag_population_size < 10:
             raise ValueError("frag_population_size must be at least 10.")
-        self.vocab_path = vocab_path
+        self.vocab = vocab
         self.injection_model_path = injection_model_path
         self.frag_population_size = frag_population_size
         self.mol_population_size = mol_population_size
@@ -71,12 +85,13 @@ class f_RAG:
         self.min_mol_size = min_mol_size
         self.max_mol_size = max_mol_size
         self.mutation_rate = mutation_rate
+        self.use_cuda = use_cuda
         
         # --- Model and Tool Initialization ---
-        self.designer = SAFEFusionDesign.load_default()
+        self.designer = SAFEFusionDesign.load_default(use_cuda=self.use_cuda)
         
         if self.injection_model_path:
-            self.designer.load_fuser(self.injection_model_path)
+            self.designer.load_fuser(self.injection_model_path, use_cuda=self.use_cuda)
             print(f"Loaded custom fuser model from {self.injection_model_path}.")
 
         #slicer = MolSlicerForSAFEEncoder(shortest_linker=True)
@@ -86,7 +101,7 @@ class f_RAG:
         self.molecule_population = []
         self.arm_population = []
         self.linker_population = []
-        self.set_initial_population(self.vocab_path)
+        self.set_initial_population(self.vocab)
 
         # Check for minimum arms and linkers
         if len(self.arm_population) < 10 or len(self.linker_population) < 10:
@@ -166,7 +181,7 @@ class f_RAG:
         elif isinstance(vocabulary, pd.DataFrame):
             print("Loading initial fragment vocabulary from provided DataFrame...")
             vocabulary_df = vocabulary.copy()
-        elif hasattr(vocabulary, 'to_dataframe'):
+        elif isinstance(vocabulary, FragmentVocabulary):
             # Handle FragmentVocabulary class
             print("Loading initial fragment vocabulary from FragmentVocabulary object...")
             vocabulary_df = vocabulary.to_dataframe()

@@ -16,6 +16,8 @@ class FragmentVocabulary:
     - One-line initialization: vocab = FragmentVocabulary('scores.csv')
     - Add data incrementally: vocab.add('new_data.csv')
     - Rescore with new parameters: vocab.rescore(scoring_method='enrichment')
+    - Save/load complete state: vocab.save_state('vocab.pkl') / FragmentVocabulary.load_state('vocab.pkl')
+    - Load from CSV: FragmentVocabulary.load_from_csv('fragments.csv')
     - Simple API: Add data → Rescore → Get results
     
     Usage:
@@ -27,6 +29,15 @@ class FragmentVocabulary:
         vocab.add('new_scores.csv')
         vocab.rescore(scoring_method='enrichment', top_percent=5.0)
         df2 = vocab.to_dataframe()
+        
+        # Save complete state (includes original data and fragment statistics)
+        vocab.save_state('complete_vocab.pkl')
+        
+        # Load complete state
+        vocab2 = FragmentVocabulary.load_state('complete_vocab.pkl')
+        
+        # Load from CSV (minimal vocabulary, no original data)
+        vocab3 = FragmentVocabulary.load_from_csv('fragments.csv')
         
         # Multiple additions
         vocab.add(df_part1) # rescores with current parameters
@@ -156,7 +167,78 @@ class FragmentVocabulary:
         return self._vocab_df.head(n)
 
     def save(self, path: str):
+        """Save the vocabulary DataFrame to CSV."""
         self._vocab_df.to_csv(path, index=False)
+
+    def save_state(self, path: str):
+        """
+        Save the complete vocabulary state including data, parameters, and fragment statistics.
+        This allows full reconstruction of the vocabulary.
+        """
+        import pickle
+        state = {
+            'data': self.data,
+            'smiles_col': self.smiles_col,
+            'score_col': self.score_col,
+            'verbose': self.verbose,
+            'sfcodec': self.sfcodec,
+            '_params': self._params,
+            '_frag_counts': dict(self._frag_counts),
+            '_frag_score_sum': dict(self._frag_score_sum),
+            '_frag_molecules': dict(self._frag_molecules),
+            '_vocab_df': self._vocab_df
+        }
+        with open(path, 'wb') as f:
+            pickle.dump(state, f)
+
+    @classmethod
+    def load_state(cls, path: str):
+        """
+        Load a complete vocabulary state from a saved state file.
+        This reconstructs the vocabulary exactly as it was saved.
+        """
+        import pickle
+        with open(path, 'rb') as f:
+            state = pickle.load(f)
+        
+        # Create a new instance with the saved data
+        vocab = cls.__new__(cls)
+        vocab.data = state['data']
+        vocab.smiles_col = state['smiles_col']
+        vocab.score_col = state['score_col']
+        vocab.verbose = state['verbose']
+        vocab.sfcodec = state['sfcodec']
+        vocab._params = state['_params']
+        vocab._frag_counts = defaultdict(int, state['_frag_counts'])
+        vocab._frag_score_sum = defaultdict(float, state['_frag_score_sum'])
+        vocab._frag_molecules = defaultdict(list, state['_frag_molecules'])
+        vocab._vocab_df = state['_vocab_df']
+        
+        # Restore instance variables from params
+        for key, value in vocab._params.items():
+            if hasattr(vocab, key):
+                setattr(vocab, key, value)
+        
+        return vocab
+
+    def get_info(self) -> Dict[str, Any]:
+        """
+        Get information about the vocabulary state.
+        Useful for debugging and understanding what data is available.
+        """
+        info = {
+            'vocab_size': len(self._vocab_df) if self._vocab_df is not None else 0,
+            'data_type': type(self.data).__name__,
+            'data_size': len(self.get_data()) if hasattr(self, 'get_data') else 'Unknown',
+            'fragment_stats': {
+                'unique_fragments': len(self._frag_counts),
+                'total_fragment_occurrences': sum(self._frag_counts.values())
+            },
+            'parameters': self._params.copy(),
+            'has_original_data': not isinstance(self.data, str) or (isinstance(self.data, str) and self.data != ''),
+            'loaded_from_csv': self._params.get('loaded_from_csv', False)
+        }
+        return info
 
     # Internal methods below
     def _initialize_vocab(self,

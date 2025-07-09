@@ -21,20 +21,25 @@ from argo.gen_models.f_rag.fusion.safegpt import SAFEFusionModel
 
 class SAFEFusionDesign(SAFEDesign):
     @classmethod
-    def load_default(cls):
+    def load_default(cls, use_cuda: bool = True):
         model = SAFEFusionModel.from_pretrained('datamol-io/safe-gpt')
         tokenizer = SAFETokenizer.from_pretrained('datamol-io/safe-gpt')
         gen_config = GenerationConfig.from_pretrained('datamol-io/safe-gpt')
-        return cls(model=model, tokenizer=tokenizer, generation_config=gen_config, verbose=False)
+        instance = cls(model=model, tokenizer=tokenizer, generation_config=gen_config, verbose=False)
+        # Move model to appropriate device
+        device = 'cuda' if use_cuda and torch.cuda.is_available() else 'cpu'
+        instance.model = instance.model.to(device)
+        return instance
 
-    def load_fuser(self, fuser_path):
+    def load_fuser(self, fuser_path, use_cuda: bool = True):
         fuser_parameters = {}
         with safetensors.safe_open(fuser_path, framework='pt') as f:
             for k in f.keys():
                 fuser_parameters[k] = f.get_tensor(k)
                 fuser_parameters[k].requires_grad = False
         self.model.load_state_dict(fuser_parameters, strict=False)
-        self.model = self.model.to('cuda' if torch.cuda.is_available() else 'cpu')
+        device = 'cuda' if use_cuda and torch.cuda.is_available() else 'cpu'
+        self.model = self.model.to(device)
         self.model.eval()
         return self
 
