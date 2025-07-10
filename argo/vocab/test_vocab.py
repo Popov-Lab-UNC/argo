@@ -16,7 +16,7 @@ def test_basic_average():
     
     # Test average scoring
     vocab = FragmentVocabulary(df_test, min_frag_size=5, max_frag_size=30, min_count=5, max_fragments=1000, verbose=False)
-    df = vocab.to_dataframe()
+    df = vocab.get_vocab()
     
     print('Average scoring results:')
     print(f'Vocabulary size: {len(df)}')
@@ -41,7 +41,7 @@ def test_basic_enrichment():
     # Test enrichment scoring
     vocab = FragmentVocabulary(df_test, scoring_method='enrichment', top_percent=5.0, 
                              min_frag_size=5, max_frag_size=30, min_count=5, max_fragments=1000, verbose=False)
-    df = vocab.to_dataframe()
+    df = vocab.get_vocab()
     
     print('Enrichment scoring results:')
     print(f'Vocabulary size: {len(df)}')
@@ -76,27 +76,33 @@ def test_incremental_enrichment():
     print('\n--- Step 1: Initial load with average scoring ---')
     vocab = FragmentVocabulary(df_part1, scoring_method='average', 
                              min_frag_size=5, max_frag_size=30, min_count=5, max_fragments=1000, verbose=False)
-    df1 = vocab.to_dataframe()
+    df1 = vocab.get_vocab()
     print(f'Initial vocabulary size: {len(df1)}')
     print('Top 5 fragments (average scoring):')
     print(df1.head())
+
+    print(vocab.get_info())
     
     # Step 2: Add next 400 lines and switch to enrichment scoring
     print('\n--- Step 2: Add 400 more molecules and switch to enrichment ---')
     vocab.add(df_part2)  # Automatically rescores with current parameters
     vocab.rescore(scoring_method='enrichment', top_percent=5.0)  # Change to enrichment
-    df2 = vocab.to_dataframe()
+    df2 = vocab.get_vocab()
     print(f'Vocabulary size after enrichment: {len(df2)}')
     print('Top 5 fragments (enrichment scoring):')
     print(df2.head())
+
+    print(vocab.get_info())
     
     # Step 3: Add next 300 lines
     print('\n--- Step 3: Add 300 more molecules ---')
     vocab.add(df_part3)  # Automatically rescores with current parameters
-    df3 = vocab.to_dataframe()
+    df3 = vocab.get_vocab()
     print(f'Final vocabulary size: {len(df3)}')
     print('Top 5 fragments (final enrichment):')
     print(df3.head())
+
+    print(vocab.get_info())
     
     # Verify results
     assert not df1.empty, 'Initial vocabulary should not be empty'

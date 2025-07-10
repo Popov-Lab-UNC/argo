@@ -7,6 +7,65 @@ from tqdm import tqdm
 
 from argo.frag_utils import SAFECodec
 
+class Fragment:
+    """
+    A class to represent a molecular fragment with its properties and statistics.
+    """
+    def __init__(self, smiles: str):
+        self.smiles = smiles
+        self.count = 0
+        self.score_sum = 0.0
+        self.molecules = []
+        
+        # Determine fragment type based on number of attachment points (*)
+        attachment_count = smiles.count('*')
+        if attachment_count == 1:
+            self.type = 'arm'
+        elif attachment_count == 2:
+            self.type = 'linker'
+        elif attachment_count >= 3:
+            self.type = 'scaffold'
+        else:
+            self.type = 'unknown'  # No attachment points
+        
+        self.attachment_count = attachment_count
+        
+        # Calculate size
+        try:
+            mol = Chem.MolFromSmiles(smiles)
+            self.size = mol.GetNumAtoms() if mol is not None else None
+        except Exception:
+            self.size = None
+    
+    def add_occurrence(self, score: float, molecule: str):
+        """Add an occurrence of this fragment with its score and source molecule."""
+        self.count += 1
+        self.score_sum += score
+        self.molecules.append(molecule)
+    
+    def add_batch_occurrences(self, total_score: float, molecules: List[str]):
+        """Add multiple occurrences of this fragment with a total score."""
+        count = len(molecules)
+        if count > 0:
+            self.count += count
+            self.score_sum += total_score
+            self.molecules.extend(molecules)
+    
+    def get_average_score(self) -> float:
+        """Get the average score of all molecules containing this fragment."""
+        return self.score_sum / self.count if self.count > 0 else 0.0
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert fragment to dictionary for DataFrame creation."""
+        return {
+            'frag': self.smiles,
+            'count': self.count,
+            'score': self.get_average_score(),
+            'size': self.size,
+            'type': self.type,
+            'attachment_count': self.attachment_count
+        }
+
 class FragmentVocabulary:
     """
     A class for crafting fragment vocabularies from molecular data with scores.
@@ -63,10 +122,8 @@ class FragmentVocabulary:
         self._vocab_df = None
         self._params: Dict[str, Any] = {}
         
-        # Initialize fragment statistics
-        self._frag_counts = defaultdict(int)
-        self._frag_score_sum = defaultdict(float)
-        self._frag_molecules = defaultdict(list)
+        # Initialize fragment storage
+        self._fragments = {}  # Dictionary of Fragment objects
         
         self._initialize_vocab(**kwargs)
 
@@ -177,9 +234,7 @@ class FragmentVocabulary:
             'verbose': self.verbose,
             'sfcodec': self.sfcodec,
             '_params': self._params,
-            '_frag_counts': dict(self._frag_counts),
-            '_frag_score_sum': dict(self._frag_score_sum),
-            '_frag_molecules': dict(self._frag_molecules),
+            '_fragments': self._fragments,
             '_vocab_df': self._vocab_df
         }
         with open(path, 'wb') as f:
@@ -203,9 +258,7 @@ class FragmentVocabulary:
         vocab.verbose = state['verbose']
         vocab.sfcodec = state['sfcodec']
         vocab._params = state['_params']
-        vocab._frag_counts = defaultdict(int, state['_frag_counts'])
-        vocab._frag_score_sum = defaultdict(float, state['_frag_score_sum'])
-        vocab._frag_molecules = defaultdict(list, state['_frag_molecules'])
+        vocab._fragments = state['_fragments']
         vocab._vocab_df = state['_vocab_df']
         
         # Restore instance variables from params
@@ -225,8 +278,8 @@ class FragmentVocabulary:
             'data_type': type(self.data).__name__,
             'data_size': len(self.get_data()) if hasattr(self, 'get_data') else 'Unknown',
             'fragment_stats': {
-                'unique_fragments': len(self._frag_counts),
-                'total_fragment_occurrences': sum(self._frag_counts.values())
+                'unique_fragments': len(self._fragments),
+                'total_fragment_occurrences': sum(frag.count for frag in self._fragments.values())
             },
             'parameters': self._params.copy(),
             'has_original_data': not isinstance(self.data, str) or (isinstance(self.data, str) and self.data != ''),
@@ -273,19 +326,11 @@ class FragmentVocabulary:
         Internal method to score fragments using current parameters and fragment statistics.
         """
         if self.scoring_method == 'average':
-            return self._score_by_average({
-                'counts': self._frag_counts, 
-                'score_sums': self._frag_score_sum, 
-                'molecules': self._frag_molecules
-            })
+            return self._score_by_average()
         elif self.scoring_method == 'enrichment':
             # Use self.data for enrichment scoring (contains all accumulated data)
             all_data = self._load_and_validate_data(self.data)
-            return self._score_by_fold_enrichment({
-                'counts': self._frag_counts, 
-                'score_sums': self._frag_score_sum, 
-                'molecules': self._frag_molecules
-            }, all_data)
+            return self._score_by_fold_enrichment(all_data)
         else:
             raise ValueError(f"Unknown scoring method: {self.scoring_method}. Use 'average' or 'enrichment'")
 
@@ -313,13 +358,17 @@ class FragmentVocabulary:
         """
         frag_stats = self._fragment_molecules(df, use_tqdm=use_tqdm)
         
-        # Update stats with new fragments
-        for frag, count in frag_stats['counts'].items():
-            self._frag_counts[frag] += count
-        for frag, score_sum in frag_stats['score_sums'].items():
-            self._frag_score_sum[frag] += score_sum
-        for frag, mols in frag_stats['molecules'].items():
-            self._frag_molecules[frag].extend(mols)
+        # Update fragment objects with new data
+        for frag_smiles, count in frag_stats['counts'].items():
+            if frag_smiles not in self._fragments:
+                self._fragments[frag_smiles] = Fragment(frag_smiles)
+            
+            # Get the molecules and scores for this fragment
+            molecules = frag_stats['molecules'][frag_smiles]
+            total_score = frag_stats['score_sums'][frag_smiles]
+            
+            # Add all occurrences at once with the total score
+            self._fragments[frag_smiles].add_batch_occurrences(total_score, molecules)
 
     def _fragment_molecules(self, df: pd.DataFrame, use_tqdm: bool = True) -> dict:
         """
@@ -362,7 +411,7 @@ class FragmentVocabulary:
 
         success_rate = success_count / len(df) * 100
         print(f"Successfully fragmented {success_count} molecules")
-        print(f"Total fragments: {len(frag_counts)}")
+        print(f"Number of fragments from {success_count} molecules: {len(frag_counts)}")
         print(f"Success rate: {success_rate:.2f}%")
         
         if success_rate < 80.0:
@@ -374,23 +423,19 @@ class FragmentVocabulary:
             'molecules': frag_molecules
         }
 
-    def _score_by_average(self, frag_stats: dict) -> pd.DataFrame:
+    def _score_by_average(self) -> pd.DataFrame:
         """
         Score fragments by average score of compounds containing each fragment.
         """
         out_rows = []
-        for frag, count in frag_stats['counts'].items():
-            if count < self.min_count:
+        for fragment in self._fragments.values():
+            if fragment.count < self.min_count:
                 continue
-            avg_score = frag_stats['score_sums'][frag] / count
-            try:
-                mol = Chem.MolFromSmiles(frag)
-                size = mol.GetNumAtoms() if mol is not None else None
-            except Exception:
-                size = None
-            if size is None or size < self.min_frag_size or size > self.max_frag_size:
+            if fragment.size is None or fragment.size < self.min_frag_size or fragment.size > self.max_frag_size:
                 continue
-            out_rows.append({'frag': frag, 'count': count, 'score': avg_score, 'size': size})
+            
+            out_rows.append(fragment.to_dict())
+        
         vocab_df = pd.DataFrame(out_rows)
         # Sort by score (ascending if lower_is_better, descending otherwise)
         vocab_df = vocab_df.sort_values('score', ascending=self.lower_is_better)
@@ -398,7 +443,7 @@ class FragmentVocabulary:
             vocab_df = vocab_df.head(self.max_fragments)
         return vocab_df
 
-    def _score_by_fold_enrichment(self, frag_stats: dict, df: pd.DataFrame) -> pd.DataFrame:
+    def _score_by_fold_enrichment(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         Score fragments by fold enrichment in top vs bottom compounds.
         """
@@ -409,13 +454,15 @@ class FragmentVocabulary:
         bottom_molecules = set(df.tail(n_bottom)[self.smiles_col].tolist())
         
         out_rows = []
-        for frag, count in frag_stats['counts'].items():
-            if count < self.min_count:
+        for fragment in self._fragments.values():
+            if fragment.count < self.min_count:
+                continue
+            if fragment.size is None or fragment.size < self.min_frag_size or fragment.size > self.max_frag_size:
                 continue
                 
             # Count appearances in top and bottom
-            top_count = sum(1 for mol in frag_stats['molecules'][frag] if mol in top_molecules)
-            bottom_count = sum(1 for mol in frag_stats['molecules'][frag] if mol in bottom_molecules)
+            top_count = sum(1 for mol in fragment.molecules if mol in top_molecules)
+            bottom_count = sum(1 for mol in fragment.molecules if mol in bottom_molecules)
             
             # Calculate fold enrichment
             if bottom_count > 0:
@@ -428,21 +475,16 @@ class FragmentVocabulary:
                 # Use a high enrichment value to indicate strong positive enrichment
                 enrichment = (top_count / len(top_molecules)) * 10.0  # Arbitrary multiplier for zero bottom case
             
-            try:
-                mol = Chem.MolFromSmiles(frag)
-                size = mol.GetNumAtoms() if mol is not None else None
-            except Exception:
-                size = None
-            if size is None or size < self.min_frag_size or size > self.max_frag_size:
-                continue
-            out_rows.append({
-                'frag': frag, 
-                'count': count, 
-                'top_count': top_count, 
+            # Create enrichment-specific dictionary
+            frag_dict = fragment.to_dict()
+            frag_dict.update({
+                'top_count': top_count,
                 'bottom_count': bottom_count,
-                'score': enrichment, 
-                'size': size
+                'score': enrichment  # Override the average score with enrichment score
             })
+            
+            out_rows.append(frag_dict)
+        
         vocab_df = pd.DataFrame(out_rows)
         # Sort by enrichment score (higher is better, so descending)
         vocab_df = vocab_df.sort_values('score', ascending=False)
