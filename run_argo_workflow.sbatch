@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --qos=gpu_access
 #SBATCH --cpus-per-task=8
-#SBATCH --mem=64G
+#SBATCH --mem=128G
 #SBATCH --time=12:00:00
 #SBATCH --output=logs/argo_workflow_%j.out
 #SBATCH --error=logs/argo_workflow_%j.err

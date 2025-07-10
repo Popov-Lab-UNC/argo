@@ -313,7 +313,7 @@ class F_RAGGenerator(BaseGenerator):
         elif task.mode == "property_optimization":
             if not task.objective:
                 raise ValueError("'objective' must be provided for this task.")
-            return self.f_rag.optimize(oracle_name=task.objective)
+            return self.f_rag.optimize(oracle_name=task.objective, num_safe=10, num_ga=10)
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 

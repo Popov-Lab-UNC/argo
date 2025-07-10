@@ -98,7 +98,7 @@ class f_RAG:
         self.sfcodec = SAFECodec(slicer='f-rag', ignore_stereo=True)
 
         # --- Population Initialization ---
-        self.molecule_population = []
+        self.mol_population = []
         self.arm_population = []
         self.linker_population = []
         self.set_initial_population(self.vocab)
@@ -172,14 +172,14 @@ class f_RAG:
     def set_initial_population(self, vocabulary):
         """Loads the initial fragment populations from a CSV file or DataFrame."""
         if isinstance(vocabulary, str):
-            print(f"Loading initial fragment vocabulary from {vocabulary}...")
+            print(f"Loading initial fragment vocabulary from {vocabulary}.")
             try:
                 vocabulary_df = pd.read_csv(vocabulary)
             except FileNotFoundError:
                 print(f"Error: Vocabulary file not found at {vocabulary}. Cannot set initial population.")
                 return
         elif isinstance(vocabulary, pd.DataFrame):
-            print("Loading initial fragment vocabulary from provided DataFrame...")
+            print("Loading initial fragment vocabulary from provided DataFrame.")
             vocabulary_df = vocabulary.copy()
         else:
             print("Error: vocabulary must be a file path or pandas DataFrame.")
@@ -210,9 +210,9 @@ class f_RAG:
     def update_population(self, scores, new_molecule_smiles_list):
         """Updates all populations with new, high-scoring individuals."""
         new_molecules = list(set(zip(scores, new_molecule_smiles_list)))
-        self.molecule_population.extend(new_molecules)
-        self.molecule_population.sort(reverse=True, key=lambda x: x[0])
-        self.molecule_population = self.molecule_population[:self.mol_population_size]
+        self.mol_population.extend(new_molecules)
+        self.mol_population.sort(reverse=True, key=lambda x: x[0])
+        self.mol_population = self.mol_population[:self.mol_population_size]
 
         existing_arms = {frag for _, frag in self.arm_population}
         existing_linkers = {frag for _, frag in self.linker_population}
@@ -296,24 +296,29 @@ class f_RAG:
                 f.write(f'"{smiles}",{score}\n')
     '''
 
-    def optimize(self, oracle_name):
+    def optimize(self, oracle_name, num_safe=10, num_ga=10):
         # assert oracle is in ['QED', 'SA', 'LogP']
         tdc_oracle = Oracle(name=oracle_name)
         print(f'Optimizing with {oracle_name}...')
         while True:
             # SAFE-GPT generation
-            safe_smiles_list = [self.generate() for _ in range(self.args.num_safe)]
+            sample_linker_generation = self.linker_generation(n_samples=num_safe // 2)
+            sample_scaffold_decoration = self.scaffold_decoration(n_samples=num_safe // 2)
+            safe_smiles_list = sample_linker_generation + sample_scaffold_decoration
             safe_prop_list = tdc_oracle(safe_smiles_list)
             self.update_population(safe_prop_list, safe_smiles_list)
 
             # GA generation
-            if len(self.mol_population) == self.args.mol_population_size:
-                ga_smiles_list = [reproduce(self.mol_population, self.args.mutation_rate)
-                                  for _ in range(self.args.num_ga)]
+            if len(self.mol_population) == self.mol_population_size:
+                ga_smiles_list = [reproduce(self.mol_population, self.mutation_rate)
+                                  for _ in range(num_ga)]
                 ga_prop_list = tdc_oracle(ga_smiles_list)
                 self.update_population(ga_prop_list, ga_smiles_list)
 
-            if tdc_oracle.finish:
-                break
+            # Check if top num_safe molecules all score above threshold
+            if len(self.mol_population) >= self.mol_population_size:
+                if all(score > 0.8 for score, smiles in self.mol_population[:num_safe]):
+                    print(f"Convergence reached: Top {num_safe} molecules all have scores > 0.8")
+                    break
 
-        return self.molecule_population
+        return self.mol_population[:num_safe]

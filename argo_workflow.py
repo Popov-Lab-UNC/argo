@@ -23,13 +23,12 @@ lower_is_better = True
 # 2. Sort by score (ascending: best first)
 df = df.sort_values('score', ascending=lower_is_better)
 
-'''
 # 3-5. Create fragment vocabulary using the new class with enrichment scoring
 vocab = FragmentVocabulary(
     data='CHD1_score0.csv',
     smiles_col='smiles',
     score_col='score',
-    scoring_method='enrichment',  # Changed from 'average' to 'enrichment'
+    scoring_method='enrichment',
     min_frag_size=5,
     max_frag_size=30,
     min_count=5,
@@ -43,9 +42,8 @@ print('Fragment statistics written to fragment_scores.csv')
 
 vocab.save_state('fragment_scores_init.pt')
 print('Fragment state written to fragment_scores_init.pt')
-'''
 
-vocab = FragmentVocabulary.load_state('fragment_scores_init.pt')
+#vocab = FragmentVocabulary.load_state('fragment_scores_init.pt')
 
 # 6. Instantiate all four generative models via the API
 use_cuda = torch.cuda.is_available()
@@ -125,11 +123,12 @@ tasks = []
 
 # 1. SAFE-GPT: De novo generation
 n_de_novo = 1000  # You can adjust this value
+batch_size = 100
 safegpt_task = GenerationTask(
     mode='de_novo',
     config={
-        'n_samples': n_de_novo,
-        'n_trials': 1,
+        'n_samples': batch_size,
+        'n_trials': n_de_novo // batch_size,
         'sanitize': True
     }
 )
@@ -155,19 +154,63 @@ for i in range(100):  # 100 batches
 gem_de_novo_task = GenerationTask(
     mode='de_novo',
     config={
-        'n_samples': 1000,
-        'max_length': 100
+        'n_samples': batch_size,
+        'n_trials': n_de_novo // batch_size,
     }
 )
 tasks.append(('GEM De Novo', gem_model, gem_de_novo_task))
 
 # GEM fine-tune task (will be run after initial generation)
+# Clean the seed SMILES to remove any spaces or invalid characters
+def clean_smiles(smiles_list):
+    """Clean SMILES strings by removing spaces and stereochemical annotations"""
+    cleaned = []
+    
+    for i, smiles in enumerate(smiles_list):
+        # Remove leading/trailing whitespace and any internal spaces
+        cleaned_smiles = smiles.strip().replace(' ', '')
+        
+        # Handle stereochemical annotations (anything after |)
+        if '|' in cleaned_smiles:
+            # Split on | and take only the first part (the actual SMILES)
+            parts = cleaned_smiles.split('|')
+            cleaned_smiles = parts[0]
+            if len(parts) > 1:
+                print(f"  Removed stereochemical annotation from SMILES {i}: '{parts[1]}'")
+        
+        if cleaned_smiles:  # Only keep non-empty strings
+            cleaned.append(cleaned_smiles)
+    
+    return cleaned
+
+# Analyze the characters in the original SMILES
+print(f"Analyzing SMILES characters...")
+all_chars = set()
+pipes_found = []
+for i, smiles in enumerate(top_1_percent):
+    all_chars.update(smiles)
+    if '|' in smiles:
+        pipes_found.append((i, smiles))
+print(f"  All unique characters in SMILES: {sorted(all_chars)}")
+print(f"  Character count: {len(all_chars)}")
+if pipes_found:
+    print(f"  Found {len(pipes_found)} SMILES with | character:")
+    for idx, smiles in pipes_found[:5]:  # Show first 5
+        print(f"    Index {idx}: '{smiles}'")
+else:
+    print(f"  No | characters found in SMILES")
+
+cleaned_top_1_percent = clean_smiles(top_1_percent)
+print(f"Cleaned {len(top_1_percent)} seed SMILES, kept {len(cleaned_top_1_percent)} valid entries")
+if len(top_1_percent) != len(cleaned_top_1_percent):
+    print(f"  Removed {len(top_1_percent) - len(cleaned_top_1_percent)} entries with spaces or invalid characters")
+
 gem_finetune_task = GenerationTask(
     mode='biased_generation',
-    seed_smiles=top_1_percent,
+    seed_smiles=cleaned_top_1_percent,
     config={
-        'n_samples': 1000,
-        'max_length': 100
+        'n_samples': batch_size,
+        'n_trials': n_de_novo // batch_size,
     }
 )
 tasks.append(('GEM Fine-tuned', gem_model, gem_finetune_task))
@@ -203,6 +246,7 @@ result = run_generation_task(safegpt_model, safegpt_task, 'SAFE-GPT De Novo')
 all_results.append(result)
 
 # Run MolMiM tasks
+'''
 print(f"\n=== Running MolMiM Biased Generation (100 batches of 10 samples each) ===")
 molmim_start = time.time()
 molmim_all_results = []
@@ -226,6 +270,7 @@ all_results.append({
     'success': True,
     'batch_results': molmim_all_results
 })
+'''
 
 # Run GEM de novo task
 result = run_generation_task(gem_model, gem_de_novo_task, 'GEM De Novo')
@@ -266,16 +311,30 @@ for result in all_results:
 # Save results to files
 print(f"\nSaving results...")
 
-# Save all generated molecules
-all_molecules = []
+# Save all generated molecules with task and model information
+all_molecules_data = []
 for result in all_results:
     if result['success']:
-        all_molecules.extend(result['results'])
+        task_name = result['task_name']
+        model_type = result['model_type']
+        for smiles in result['results']:
+            all_molecules_data.append({
+                'smiles': smiles,
+                'task_name': task_name,
+                'model_type': model_type
+            })
 
-if all_molecules:
-    molecules_df = pd.DataFrame({'smiles': all_molecules})
+if all_molecules_data:
+    molecules_df = pd.DataFrame(all_molecules_data)
     molecules_df.to_csv('generated_molecules.csv', index=False)
-    print(f"✓ Saved {len(all_molecules)} generated molecules to 'generated_molecules.csv'")
+    print(f"✓ Saved {len(all_molecules_data)} generated molecules to 'generated_molecules.csv'")
+    print(f"  Columns: {list(molecules_df.columns)}")
+    
+    # Show breakdown by task
+    print(f"  Breakdown by task:")
+    task_counts = molecules_df['task_name'].value_counts()
+    for task, count in task_counts.items():
+        print(f"    {task}: {count} molecules")
 
 # Save timing results
 timing_results = []
@@ -297,9 +356,9 @@ print(f"\n{'='*60}")
 print("GENERATION COMPLETE")
 print(f"{'='*60}")
 
-# 8. Build and Apply Filter Model
+# 8. Load and Apply Filter Model
 print(f"\n{'='*60}")
-print("BUILDING AND APPLYING FILTER MODEL")
+print("LOADING AND APPLYING FILTER MODEL")
 print(f"{'='*60}")
 
 from argo.filter_models import SmilesFilterModel
@@ -396,12 +455,17 @@ def apply_filter_to_results(filter_model: SmilesFilterModel, all_results: List[D
     
     return filtering_results
 
+'''
 # Build the filter model
 filter_model = build_filter_model(df, 'smiles', 'score', threshold_percentile=20.0)
 
 # Save the filter model
 filter_model.save('chd1_filter_model.joblib')
 print(f"✓ Filter model saved to 'chd1_filter_model.joblib'")
+'''
+
+# Load the filter model
+filter_model = SmilesFilterModel.load('chd1_filter_model.joblib')
 
 # Apply filter to all results
 filtering_results = apply_filter_to_results(filter_model, all_results, conf_thresh=0.6)
