@@ -57,7 +57,7 @@ f_rag_model = GenerationModel('f-rag',
                               vocab=vocab.get_vocab(),
                               injection_model_path="argo/gen_models/pretrained/model.safetensors",
                               frag_population_size=500,
-                              mol_population_size=200,
+                              mol_population_size=1500,
                               min_frag_size=5,
                               max_frag_size=30,
                               min_mol_size=10,
@@ -114,9 +114,17 @@ def run_generation_task(model: GenerationModel, task: GenerationTask, task_name:
             'error': str(e)
         }
 
-# Get top compounds
+# Get top compounds and fragments
 top_100_compounds = df.head(100)['smiles'].tolist()
 top_1_percent = df.head(int(len(df) * 0.01))['smiles'].tolist()
+
+# Get top fragments from vocabulary
+vocab_df = vocab.get_vocab()
+top_arms = vocab_df[vocab_df['type'] == 'arm'].head(10)['frag'].tolist()
+top_linkers = vocab_df[vocab_df['type'] == 'linker'].head(10)['frag'].tolist()
+
+print(f"Top 10 arms: {len(top_arms)} fragments")
+print(f"Top 10 linkers: {len(top_linkers)} fragments")
 
 # Define generation tasks
 tasks = []
@@ -134,10 +142,37 @@ safegpt_task = GenerationTask(
 )
 tasks.append(('SAFE-GPT De Novo', safegpt_model, safegpt_task))
 
+import random
+# 1b. SAFE-GPT: Scaffold decoration using top arms
+for i, linker in enumerate(top_linkers):
+    safegpt_scaffold_task = GenerationTask(
+        mode='scaffold_decoration',
+        scaffold=linker,
+        config={
+            'n_samples': 10,  # 10 molecules per linker
+            'sanitize': True
+        }
+    )
+    tasks.append((f'SAFE-GPT Scaffold Decoration {i+1}', safegpt_model, safegpt_scaffold_task))
+
+# 1c. SAFE-GPT: Linker generation using top linkers
+for i, arm in enumerate(top_arms):
+    safegpt_linker_task = GenerationTask(
+        mode='linker_generation',
+        fragments=[arm, random.choice(top_arms)],
+        config={
+            'n_samples': 10,  # 10 molecules per arm pairing
+            'sanitize': True
+        }
+    )
+    tasks.append((f'SAFE-GPT Linker Generation {i+1}', safegpt_model, safegpt_linker_task))
+
+
+
 # 2. MolMiM: Biased generation based on top 100 compounds
-# We'll run 100 batches of 10 samples each to get 1000 total
-molmim_tasks = []
-for i in range(100):  # 100 batches
+# Generate 1000 molecules total (100 batches of 10 each)
+'''
+for i in range(100):
     seed_smiles = top_100_compounds[i % len(top_100_compounds)]  # Cycle through top 100
     molmim_task = GenerationTask(
         mode='biased_generation',
@@ -148,7 +183,8 @@ for i in range(100):  # 100 batches
             'scaled_radius': 1.0
         }
     )
-    molmim_tasks.append((f'MolMiM Biased Generation Batch {i+1}', molmim_model, molmim_task))
+    tasks.append((f'MolMiM Biased Generation Batch {i+1}', molmim_model, molmim_task))
+'''
 
 # 3. GEM: De novo generation (1000), then fine-tune and generate 1000 more
 gem_de_novo_task = GenerationTask(
@@ -183,6 +219,7 @@ def clean_smiles(smiles_list):
     
     return cleaned
 
+'''
 # Analyze the characters in the original SMILES
 print(f"Analyzing SMILES characters...")
 all_chars = set()
@@ -199,6 +236,7 @@ if pipes_found:
         print(f"    Index {idx}: '{smiles}'")
 else:
     print(f"  No | characters found in SMILES")
+'''
 
 cleaned_top_1_percent = clean_smiles(top_1_percent)
 print(f"Cleaned {len(top_1_percent)} seed SMILES, kept {len(cleaned_top_1_percent)} valid entries")
@@ -215,7 +253,7 @@ gem_finetune_task = GenerationTask(
 )
 tasks.append(('GEM Fine-tuned', gem_model, gem_finetune_task))
 
-# 4. f-RAG: Linker generation and scaffold decoration
+# 4. f-RAG: Linker generation, scaffold decoration, and property optimization
 frag_linker_task = GenerationTask(
     mode='linker_generation',
     config={
@@ -234,6 +272,16 @@ frag_scaffold_task = GenerationTask(
 )
 tasks.append(('f-RAG Scaffold Decoration', f_rag_model, frag_scaffold_task))
 
+frag_optimize_task = GenerationTask(
+    mode='property_optimization',
+    objective='qed',
+    config={
+        'n_samples': 1000,
+        'random_seed': 42,
+    }
+)
+tasks.append(('f-RAG Property Optimization (QED)', f_rag_model, frag_optimize_task))
+
 # Run all tasks and collect results
 print(f"\n{'='*60}")
 print("STARTING GENERATION TASKS")
@@ -241,51 +289,10 @@ print(f"{'='*60}")
 
 all_results = []
 
-# Run SAFE-GPT task
-result = run_generation_task(safegpt_model, safegpt_task, 'SAFE-GPT De Novo')
-all_results.append(result)
-
-# Run MolMiM tasks
-'''
-print(f"\n=== Running MolMiM Biased Generation (100 batches of 10 samples each) ===")
-molmim_start = time.time()
-molmim_all_results = []
-for i, (task_name, model, task) in enumerate(molmim_tasks):
-    result = run_generation_task(model, task, f'MolMiM Batch {i+1}/100')
-    molmim_all_results.append(result)
-    if result['success']:
-        print(f"  Batch {i+1}: {len(result['results'])} molecules in {result['duration']:.2f}s")
-    else:
-        print(f"  Batch {i+1}: FAILED - {result.get('error', 'Unknown error')}")
-
-molmim_total_time = time.time() - molmim_start
-molmim_total_molecules = sum(len(r['results']) for r in molmim_all_results if r['success'])
-print(f"✓ MolMiM completed: {molmim_total_molecules} molecules in {molmim_total_time:.2f} seconds")
-
-all_results.append({
-    'task_name': 'MolMiM Biased Generation (All Batches)',
-    'model_type': 'MolMIMGenerator',
-    'results': [mol for r in molmim_all_results if r['success'] for mol in r['results']],
-    'duration': molmim_total_time,
-    'success': True,
-    'batch_results': molmim_all_results
-})
-'''
-
-# Run GEM de novo task
-result = run_generation_task(gem_model, gem_de_novo_task, 'GEM De Novo')
-all_results.append(result)
-
-# Run GEM fine-tune task
-result = run_generation_task(gem_model, gem_finetune_task, 'GEM Fine-tuned')
-all_results.append(result)
-
-# Run f-RAG tasks
-result = run_generation_task(f_rag_model, frag_linker_task, 'f-RAG Linker Generation')
-all_results.append(result)
-
-result = run_generation_task(f_rag_model, frag_scaffold_task, 'f-RAG Scaffold Decoration')
-all_results.append(result)
+# Run all tasks in a single loop
+for task_name, model, task in tasks:
+    result = run_generation_task(model, task, task_name)
+    all_results.append(result)
 
 # Summary
 print(f"\n{'='*60}")

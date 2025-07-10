@@ -296,14 +296,15 @@ class f_RAG:
                 f.write(f'"{smiles}",{score}\n')
     '''
 
-    def optimize(self, oracle_name, num_safe=10, num_ga=10):
+    def optimize(self, oracle_name, n_samples, threshold=0.8, max_iter=50):
         # assert oracle is in ['QED', 'SA', 'LogP']
         tdc_oracle = Oracle(name=oracle_name)
         print(f'Optimizing with {oracle_name}...')
+        iter = 0
         while True:
             # SAFE-GPT generation
-            sample_linker_generation = self.linker_generation(n_samples=num_safe // 2)
-            sample_scaffold_decoration = self.scaffold_decoration(n_samples=num_safe // 2)
+            sample_linker_generation = self.linker_generation(n_samples=n_samples // 2)
+            sample_scaffold_decoration = self.scaffold_decoration(n_samples=n_samples // 2)
             safe_smiles_list = sample_linker_generation + sample_scaffold_decoration
             safe_prop_list = tdc_oracle(safe_smiles_list)
             self.update_population(safe_prop_list, safe_smiles_list)
@@ -311,14 +312,19 @@ class f_RAG:
             # GA generation
             if len(self.mol_population) == self.mol_population_size:
                 ga_smiles_list = [reproduce(self.mol_population, self.mutation_rate)
-                                  for _ in range(num_ga)]
+                                  for _ in range(n_samples)]
                 ga_prop_list = tdc_oracle(ga_smiles_list)
                 self.update_population(ga_prop_list, ga_smiles_list)
 
             # Check if top num_safe molecules all score above threshold
             if len(self.mol_population) >= self.mol_population_size:
-                if all(score > 0.8 for score, smiles in self.mol_population[:num_safe]):
-                    print(f"Convergence reached: Top {num_safe} molecules all have scores > 0.8")
+                if all(score > 0.8 for score, smiles in self.mol_population[:n_samples]):
+                    print(f"Convergence reached: Top {n_samples} molecules all have scores > 0.8")
                     break
+        
+            iter += 1
+            if iter > max_iter:
+                print(f"Max iterations reached: {max_iter}")
+                break
 
-        return self.mol_population[:num_safe]
+        return self.mol_population[:n_samples]
