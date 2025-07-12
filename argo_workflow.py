@@ -23,6 +23,7 @@ lower_is_better = True
 # 2. Sort by score (ascending: best first)
 df = df.sort_values('score', ascending=lower_is_better)
 
+'''
 # 3-5. Create fragment vocabulary using the new class with enrichment scoring
 vocab = FragmentVocabulary(
     data='CHD1_score0.csv',
@@ -42,8 +43,9 @@ print('Fragment statistics written to fragment_scores.csv')
 
 vocab.save_state('fragment_scores_init.pt')
 print('Fragment state written to fragment_scores_init.pt')
+'''
 
-#vocab = FragmentVocabulary.load_state('fragment_scores_init.pt')
+vocab = FragmentVocabulary.load_state('fragment_scores_init.pt')
 
 # 6. Instantiate all four generative models via the API
 use_cuda = torch.cuda.is_available()
@@ -324,10 +326,19 @@ for result in all_results:
     if result['success']:
         task_name = result['task_name']
         model_type = result['model_type']
+        
+        # Summarize task names for CSV output
+        if 'SAFE-GPT Scaffold Decoration' in task_name:
+            summarized_task_name = 'SAFE-GPT Scaffold Decoration'
+        elif 'SAFE-GPT Linker Generation' in task_name:
+            summarized_task_name = 'SAFE-GPT Linker Generation'
+        else:
+            summarized_task_name = task_name
+            
         for smiles in result['results']:
             all_molecules_data.append({
                 'smiles': smiles,
-                'task_name': task_name,
+                'task_name': summarized_task_name,
                 'model_type': model_type
             })
 
@@ -337,11 +348,26 @@ if all_molecules_data:
     print(f"✓ Saved {len(all_molecules_data)} generated molecules to 'generated_molecules.csv'")
     print(f"  Columns: {list(molecules_df.columns)}")
     
-    # Show breakdown by task
-    print(f"  Breakdown by task:")
-    task_counts = molecules_df['task_name'].value_counts()
-    for task, count in task_counts.items():
-        print(f"    {task}: {count} molecules")
+    # Show breakdown by task type (summarized)
+    print(f"  Breakdown by task type:")
+    
+    # Group similar tasks together
+    task_summary = {}
+    for task_name, count in molecules_df['task_name'].value_counts().items():
+        # Extract the base task type
+        if 'SAFE-GPT Scaffold Decoration' in task_name:
+            base_task = 'SAFE-GPT Scaffold Decoration'
+        elif 'SAFE-GPT Linker Generation' in task_name:
+            base_task = 'SAFE-GPT Linker Generation'
+        else:
+            base_task = task_name
+            
+        if base_task not in task_summary:
+            task_summary[base_task] = 0
+        task_summary[base_task] += count
+    
+    for task_type, count in task_summary.items():
+        print(f"    {task_type}: {count} molecules")
 
 # Save timing results
 timing_results = []
@@ -491,16 +517,42 @@ print(f"  Total molecules generated: {total_generated}")
 print(f"  Total molecules passed filter: {total_passed}")
 print(f"  Overall pass rate: {overall_pass_rate:.1f}%")
 
-print(f"\nResults by task:")
+print(f"\nResults by task type:")
+# Group similar tasks together for filtering results
+filtering_summary = {}
 for task_name, result in filtering_results.items():
-    status = "✓" if result['passed_filter'] > 0 else "✗"
-    print(f"  {status} {task_name}:")
-    print(f"    Generated: {result['total_molecules']}")
-    print(f"    Passed filter: {result['passed_filter']}")
-    print(f"    Pass rate: {result['pass_rate']:.1f}%")
-    print(f"    Duration: {result['duration']:.2f}s")
-    if 'error' in result:
-        print(f"    Error: {result['error']}")
+    # Extract the base task type
+    if 'SAFE-GPT Scaffold Decoration' in task_name:
+        base_task = 'SAFE-GPT Scaffold Decoration'
+    elif 'SAFE-GPT Linker Generation' in task_name:
+        base_task = 'SAFE-GPT Linker Generation'
+    else:
+        base_task = task_name
+        
+    if base_task not in filtering_summary:
+        filtering_summary[base_task] = {
+            'total_molecules': 0,
+            'passed_filter': 0,
+            'duration': 0,
+            'errors': []
+        }
+    
+    filtering_summary[base_task]['total_molecules'] += result['total_molecules']
+    filtering_summary[base_task]['passed_filter'] += result['passed_filter']
+    filtering_summary[base_task]['duration'] += result['duration']
+    if 'error' in result and result['error']:
+        filtering_summary[base_task]['errors'].append(result['error'])
+
+for task_type, summary in filtering_summary.items():
+    status = "✓" if summary['passed_filter'] > 0 else "✗"
+    pass_rate = summary['passed_filter'] / summary['total_molecules'] * 100 if summary['total_molecules'] > 0 else 0
+    print(f"  {status} {task_type}:")
+    print(f"    Generated: {summary['total_molecules']}")
+    print(f"    Passed filter: {summary['passed_filter']}")
+    print(f"    Pass rate: {pass_rate:.1f}%")
+    print(f"    Duration: {summary['duration']:.2f}s")
+    if summary['errors']:
+        print(f"    Errors: {len(summary['errors'])} tasks had errors")
 
 # Save filtering results
 print(f"\nSaving filtering results...")

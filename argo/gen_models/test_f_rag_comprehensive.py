@@ -166,7 +166,7 @@ def test_f_rag_property_optimization():
         valid_molecules = []
         qed_scores = []
         
-        for score, smiles in results:
+        for smiles in results:
             mol = Chem.MolFromSmiles(smiles)
             if mol is not None:
                 try:

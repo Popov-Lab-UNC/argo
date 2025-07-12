@@ -89,10 +89,8 @@ class f_RAG:
         
         # --- Model and Tool Initialization ---
         self.designer = SAFEFusionDesign.load_default(use_cuda=self.use_cuda)
-        
-        if self.injection_model_path:
-            self.designer.load_fuser(self.injection_model_path, use_cuda=self.use_cuda)
-            print(f"Loaded custom fuser model from {self.injection_model_path}.")
+        self.designer.load_fuser(self.injection_model_path, use_cuda=self.use_cuda)
+        print(f"Loaded custom fuser model from {self.injection_model_path}.")
 
         #slicer = MolSlicerForSAFEEncoder(shortest_linker=True)
         self.sfcodec = SAFECodec(slicer='f-rag', ignore_stereo=True)
@@ -238,7 +236,7 @@ class f_RAG:
         Generates molecules by connecting two randomly selected arms using a linker.
         """
         generated_molecules = []
-        max_attempts, attempts = n_samples * 10, 0
+        max_attempts, attempts = n_samples * 3, 0
 
         print(f'Generating {n_samples} molecules by linker generation...')
         while len(generated_molecules) < n_samples and attempts < max_attempts:
@@ -263,7 +261,7 @@ class f_RAG:
         Generates molecules by extending a motif (arm + linker) with additional arms.
         """
         generated_molecules = []
-        max_attempts, attempts = n_samples * 10, 0
+        max_attempts, attempts = n_samples * 3, 0
         
         print(f'Generating {n_samples} molecules by scaffold decoration...')
         while len(generated_molecules) < n_samples and attempts < max_attempts:
@@ -296,6 +294,10 @@ class f_RAG:
                 f.write(f'"{smiles}",{score}\n')
     '''
 
+    # TODO: Aha, it might be do to lack of recording that optimization takes so long to run. 
+    # It took normal f-rag 2 hours to generate 10000 molecules (writing to file), and it took 2 hours to optimize 1000 molecules.
+    # Linker generation just takes a little longer... (~1s per molecule on GPU)
+
     def optimize(self, oracle_name, n_samples, threshold=0.8, max_iter=50):
         # assert oracle is in ['QED', 'SA', 'LogP']
         tdc_oracle = Oracle(name=oracle_name)
@@ -327,4 +329,4 @@ class f_RAG:
                 print(f"Max iterations reached: {max_iter}")
                 break
 
-        return self.mol_population[:n_samples]
+        return [smiles for score, smiles in self.mol_population[:n_samples]]
