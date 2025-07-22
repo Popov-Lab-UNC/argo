@@ -58,13 +58,12 @@ gem_model = GenerationModel('gem', model_path='argo/gen_models/pretrained/gem_ch
 f_rag_model = GenerationModel('f-rag', 
                               vocab=vocab.get_vocab(),
                               injection_model_path="argo/gen_models/pretrained/model.safetensors",
-                              frag_population_size=500,
-                              mol_population_size=1500,
+                              frag_population_size=50,
+                              mol_population_size=200,
                               min_frag_size=5,
                               max_frag_size=30,
                               min_mol_size=10,
                               max_mol_size=150,
-                              mutation_rate=0.01,
                               use_cuda=use_cuda
 )
 
@@ -124,9 +123,6 @@ top_1_percent = df.head(int(len(df) * 0.01))['smiles'].tolist()
 vocab_df = vocab.get_vocab()
 top_arms = vocab_df[vocab_df['type'] == 'arm'].head(10)['frag'].tolist()
 top_linkers = vocab_df[vocab_df['type'] == 'linker'].head(10)['frag'].tolist()
-
-print(f"Top 10 arms: {len(top_arms)} fragments")
-print(f"Top 10 linkers: {len(top_linkers)} fragments")
 
 # Define generation tasks
 tasks = []
@@ -280,6 +276,8 @@ frag_optimize_task = GenerationTask(
     config={
         'n_samples': 1000,
         'random_seed': 42,
+        'batch_size': 100,
+        'max_iter': 20
     }
 )
 tasks.append(('f-RAG Property Optimization (QED)', f_rag_model, frag_optimize_task))

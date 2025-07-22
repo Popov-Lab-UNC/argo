@@ -283,7 +283,7 @@ class F_RAGGenerator(BaseGenerator):
     """
     Interface for the f-RAG model, an evolutionary algorithm for de novo design.
     """
-    def __init__(self, injection_model_path: str, vocab: "str | pd.DataFrame", frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, mutation_rate: float = 0.01, use_cuda: bool = True):
+    def __init__(self, injection_model_path: str, vocab: "str | pd.DataFrame", frag_population_size: int = 50, mol_population_size: int = 100, min_frag_size: int = 1, max_frag_size: int = 15, min_mol_size: int = 10, max_mol_size: int = 100, use_cuda: bool = True):
         super().__init__(use_cuda=use_cuda)
         self.f_rag = f_RAG(
             injection_model_path=injection_model_path,
@@ -294,7 +294,6 @@ class F_RAGGenerator(BaseGenerator):
             max_frag_size=max_frag_size,
             min_mol_size=min_mol_size,
             max_mol_size=max_mol_size,
-            mutation_rate=mutation_rate,
             use_cuda=use_cuda
         )
 
@@ -309,15 +308,22 @@ class F_RAGGenerator(BaseGenerator):
             scaffold = config.get('scaffold', None)
             n_samples = config.get('n_samples', 10)
             random_seed = config.get('random_seed', 42)
-            return self.f_rag.scaffold_decoration(scaffold=scaffold, n_samples=n_samples, random_seed=random_seed)
+            return self.f_rag.scaffold_decoration(n_samples=n_samples, scaffold=scaffold, random_seed=random_seed)
         elif task.mode == "property_optimization":
             if not task.objective:
                 raise ValueError("'objective' must be provided for this task.")
             config = task.config or {}
             n_samples = config.get('n_samples', 10)
             threshold = config.get('threshold', 0.8)
-            max_iter = config.get('max_iter', 50)
-            return self.f_rag.optimize(oracle_name=task.objective, n_samples=n_samples, threshold=threshold, max_iter=max_iter)
+            max_iter = config.get('max_iter', 10)
+            random_seed = config.get('random_seed', 42)
+            higher_is_better = config.get('higher_is_better', True)        
+            batch_size = config.get('batch_size', 50)
+            mutation_rate = config.get('mutation_rate', 0.01)
+            init_lg_wt = config.get('init_lg_wt', 0.5)
+            init_sd_wt = config.get('init_sd_wt', 0.5)
+            init_ga_wt = config.get('init_ga_wt', 0.0)
+            return self.f_rag.optimize(n_samples=n_samples, oracle_name=task.objective, threshold=threshold, max_iter=max_iter, higher_is_better=higher_is_better, batch_size=batch_size, mutation_rate=mutation_rate, init_lg_wt=init_lg_wt, init_sd_wt=init_sd_wt, init_ga_wt=init_ga_wt)
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
 

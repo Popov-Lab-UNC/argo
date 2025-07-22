@@ -31,12 +31,10 @@ def test_f_rag_scaffold_decoration():
         vocab=vocab_path,
         injection_model_path="pretrained/model.safetensors",
         frag_population_size=50,
-        mol_population_size=30,
         min_frag_size=1,
         max_frag_size=20,
         min_mol_size=10,
-        max_mol_size=150,
-        mutation_rate=0.01
+        max_mol_size=150
     )
     
     task = GenerationTask(
@@ -82,12 +80,10 @@ def test_f_rag_linker_generation():
         vocab=vocab_path,
         injection_model_path="pretrained/model.safetensors",
         frag_population_size=50,
-        mol_population_size=30,
         min_frag_size=1,
         max_frag_size=20,
         min_mol_size=10,
-        max_mol_size=150,
-        mutation_rate=0.01
+        max_mol_size=150
     )
     
     task = GenerationTask(
@@ -141,12 +137,11 @@ def test_f_rag_property_optimization():
         vocab=vocab_path,
         injection_model_path="pretrained/model.safetensors",
         frag_population_size=50,
-        mol_population_size=30,
+        mol_population_size=50,
         min_frag_size=1,
         max_frag_size=20,
         min_mol_size=10,
         max_mol_size=150,
-        mutation_rate=0.01
     )
     
     task = GenerationTask(
@@ -154,7 +149,8 @@ def test_f_rag_property_optimization():
         objective='qed',
         config={
             "n_samples": 10,
-            "random_seed": 42
+            "random_seed": 42,
+            "batch_size": 10,
         }
     )
     
@@ -209,12 +205,12 @@ def run_all_tests():
     all_results = {}
     
     # Test 1: Scaffold decoration
-    scaffold_results = test_f_rag_scaffold_decoration()
-    all_results['scaffold_decoration'] = scaffold_results
+    #scaffold_results = test_f_rag_scaffold_decoration()
+    #all_results['scaffold_decoration'] = scaffold_results
     
     # Test 2: Linker generation
-    linker_results = test_f_rag_linker_generation()
-    all_results['linker_generation'] = linker_results
+    #linker_results = test_f_rag_linker_generation()
+    #all_results['linker_generation'] = linker_results
     
     # Test 3: Property optimization
     property_results = test_f_rag_property_optimization()

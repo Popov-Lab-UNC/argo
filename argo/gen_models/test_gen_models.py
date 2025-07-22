@@ -156,12 +156,10 @@ def test_f_rag():
         vocab_path=vocab_path,
         injection_model_path="pretrained/model.safetensors",
         frag_population_size=15,
-        mol_population_size=20,
         min_frag_size=1,
         max_frag_size=15,
         min_mol_size=10,
         max_mol_size=100,
-        mutation_rate=0.01
     )
     task = GenerationTask(
         mode='scaffold_decoration',

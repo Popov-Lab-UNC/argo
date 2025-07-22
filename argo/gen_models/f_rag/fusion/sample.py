@@ -43,6 +43,7 @@ class SAFEFusionDesign(SAFEDesign):
         self.model.eval()
         return self
 
+    # TODO: Change if we want to use multiple samples
     def _generate(
         self,
         n_samples = None,

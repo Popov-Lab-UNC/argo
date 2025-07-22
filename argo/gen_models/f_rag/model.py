@@ -53,7 +53,6 @@ class f_RAG:
         max_frag_size: int = 15,
         min_mol_size: int = 10,
         max_mol_size: int = 100,
-        mutation_rate: float = 0.01,
         use_cuda: bool = True,
     ):
         """
@@ -84,7 +83,6 @@ class f_RAG:
         self.max_frag_size = max_frag_size
         self.min_mol_size = min_mol_size
         self.max_mol_size = max_mol_size
-        self.mutation_rate = mutation_rate
         self.use_cuda = use_cuda
         
         # --- Model and Tool Initialization ---
@@ -167,7 +165,7 @@ class f_RAG:
         except Exception:
             return None
 
-    def set_initial_population(self, vocabulary):
+    def set_initial_population(self, vocabulary: "str | pd.DataFrame"):
         """Loads the initial fragment populations from a CSV file or DataFrame."""
         if isinstance(vocabulary, str):
             print(f"Loading initial fragment vocabulary from {vocabulary}.")
@@ -205,11 +203,11 @@ class f_RAG:
         self.linker_population = self.linker_population[:self.frag_population_size]
         print(f"Initialized with {len(self.arm_population)} arms and {len(self.linker_population)} linkers.")
 
-    def update_population(self, scores, new_molecule_smiles_list):
+    def update_population(self, scores, new_molecule_smiles_list, higher_is_better=True):
         """Updates all populations with new, high-scoring individuals."""
         new_molecules = list(set(zip(scores, new_molecule_smiles_list)))
         self.mol_population.extend(new_molecules)
-        self.mol_population.sort(reverse=True, key=lambda x: x[0])
+        self.mol_population.sort(reverse=higher_is_better, key=lambda x: x[0])
         self.mol_population = self.mol_population[:self.mol_population_size]
 
         existing_arms = {frag for _, frag in self.arm_population}
@@ -226,19 +224,18 @@ class f_RAG:
                         self.linker_population.append((score, fragment_smiles))
                         existing_linkers.add(fragment_smiles)
 
-        self.arm_population.sort(reverse=True, key=lambda x: x[0])
-        self.linker_population.sort(reverse=True, key=lambda x: x[0])
+        self.arm_population.sort(reverse=higher_is_better, key=lambda x: x[0])
+        self.linker_population.sort(reverse=higher_is_better, key=lambda x: x[0])
         self.arm_population = self.arm_population[:self.frag_population_size]
         self.linker_population = self.linker_population[:self.frag_population_size]
 
-    def linker_generation(self, n_samples=5, random_seed=42):
+    def linker_generation(self, n_samples, random_seed=42):
         """
         Generates molecules by connecting two randomly selected arms using a linker.
         """
         generated_molecules = []
         max_attempts, attempts = n_samples * 3, 0
 
-        print(f'Generating {n_samples} molecules by linker generation...')
         while len(generated_molecules) < n_samples and attempts < max_attempts:
             attempts += 1
             try:
@@ -256,14 +253,13 @@ class f_RAG:
                 continue
         return generated_molecules
 
-    def scaffold_decoration(self, scaffold=None, n_samples=5, random_seed=42):
+    def scaffold_decoration(self, n_samples, scaffold=None, random_seed=42):
         """
         Generates molecules by extending a motif (arm + linker) with additional arms.
         """
         generated_molecules = []
         max_attempts, attempts = n_samples * 3, 0
-        
-        print(f'Generating {n_samples} molecules by scaffold decoration...')
+
         while len(generated_molecules) < n_samples and attempts < max_attempts:
             attempts += 1
             try:
@@ -294,39 +290,191 @@ class f_RAG:
                 f.write(f'"{smiles}",{score}\n')
     '''
 
-    # TODO: Aha, it might be do to lack of recording that optimization takes so long to run. 
-    # It took normal f-rag 2 hours to generate 10000 molecules (writing to file), and it took 2 hours to optimize 1000 molecules.
-    # Linker generation just takes a little longer... (~1s per molecule on GPU)
+    def _reset_fragment_scores(self):
+        self.arm_population = [(0.0, frag) for _, frag in self.arm_population]
+        self.linker_population = [(0.0, frag) for _, frag in self.linker_population]
+        return
 
-    def optimize(self, oracle_name, n_samples, threshold=0.8, max_iter=50):
-        # assert oracle is in ['QED', 'SA', 'LogP']
-        tdc_oracle = Oracle(name=oracle_name)
-        print(f'Optimizing with {oracle_name}...')
-        iter = 0
-        while True:
-            # SAFE-GPT generation
-            sample_linker_generation = self.linker_generation(n_samples=n_samples // 2)
-            sample_scaffold_decoration = self.scaffold_decoration(n_samples=n_samples // 2)
-            safe_smiles_list = sample_linker_generation + sample_scaffold_decoration
-            safe_prop_list = tdc_oracle(safe_smiles_list)
-            self.update_population(safe_prop_list, safe_smiles_list)
+    # Call reset_mol_population if you want to reset the mol population before optimizing
+    def reset_mol_population(self):
+        self.mol_population = []
 
-            # GA generation
-            if len(self.mol_population) == self.mol_population_size:
-                ga_smiles_list = [reproduce(self.mol_population, self.mutation_rate)
-                                  for _ in range(n_samples)]
-                ga_prop_list = tdc_oracle(ga_smiles_list)
-                self.update_population(ga_prop_list, ga_smiles_list)
+    def reset_mol_population_size(self, new_mol_population_size: int):
+        self.mol_population_size = new_mol_population_size
 
-            # Check if top num_safe molecules all score above threshold
-            if len(self.mol_population) >= self.mol_population_size:
-                if all(score > 0.8 for score, smiles in self.mol_population[:n_samples]):
-                    print(f"Convergence reached: Top {n_samples} molecules all have scores > 0.8")
-                    break
+    def reset_frag_population(self, new_vocab: 'str | pd.DataFrame' = None, new_frag_population_size: int = None):
+        self.arm_population = []
+        self.linker_population = []
+
+        if new_frag_population_size < 10:
+            raise ValueError("frag_population_size must be at least 10.")
+        if new_frag_population_size is not None:
+            self.frag_population_size = new_frag_population_size
+
+        if new_vocab is not None:
+            self.set_initial_population(new_vocab)
+        else:
+            self.set_initial_population(self.vocab)
+
+    # Optimization must reset fragment scores to 0.0
+    # TODO: Logic for threshold for higher_is_better=False
+    def optimize(self,
+                 n_samples,
+                 oracle_name='QED',
+                 random_seed=42,
+                 threshold=0.8,
+                 higher_is_better=True,
+                 max_iter=10,              
+                 batch_size=50,
+                 mutation_rate=0.01,
+                 init_lg_wt=0.5,
+                 init_sd_wt=0.5,
+                 init_ga_wt=0.0
+    ):
+        """
+        Optimizes and collects n_samples of molecules that meet a threshold.
+
+        n_samples: The target number of optimized molecules to collect and return.
+        batch_size: The number of new molecules to generate in each iteration.
+        """
+        # 1. Initialization
+        assert oracle_name.lower() in ['qed', 'sa', 'logp'], f"Oracle name must be one of ['QED', 'SA', 'LogP'], got {oracle_name}"
         
-            iter += 1
-            if iter > max_iter:
-                print(f"Max iterations reached: {max_iter}")
+        tdc_oracle = Oracle(name=oracle_name)
+        print(f'Optimizing with {oracle_name} to collect {n_samples} molecules with score > {threshold}...')
+
+        self._reset_fragment_scores()
+
+        # The final collection of successful molecules
+        optimized_molecules = []
+        seen_smiles = set()
+
+        molecule_sources = {}
+        sampler_weights = {'lg': init_lg_wt, 'sd': init_sd_wt, 'ga': init_ga_wt}
+        ga_active = False
+        
+        for i in range(max_iter):
+            # 2. Check if we have collected enough molecules
+            if len(optimized_molecules) >= n_samples:
+                print(f"\nCollection complete: Found {len(optimized_molecules)} molecules meeting the threshold.")
                 break
 
-        return [smiles for score, smiles in self.mol_population[:n_samples]]
+            # 3. Determine sample counts for this batch
+            normalized_weights = self._normalize_weights(sampler_weights, ga_active)
+            n_samples_by_source = self._get_batch_counts(batch_size, normalized_weights)
+
+            # 4. Generate and Score a new Batch
+            new_mols_with_source = self._generate_molecules(n_samples_by_source, random_seed + i, mutation_rate, ga_active)
+            if not new_mols_with_source:
+                print("Warning: No molecules generated this iteration.")
+                continue
+
+            smiles_list = [smiles for smiles, _ in new_mols_with_source]
+            scores = tdc_oracle(smiles_list)
+            
+            # 5. Process the new batch: Collect good molecules and update the pool
+            # Collect new, valid molecules in a batch
+            new_mols = [
+                (score, smiles)
+                for score, smiles in zip(scores, smiles_list)
+                if score >= threshold and smiles not in seen_smiles
+            ]
+            optimized_molecules.extend(new_mols)
+            seen_smiles.update(smiles for _, smiles in new_mols)
+            
+            # Update the revolving gene pool
+            self.update_population(scores, smiles_list, higher_is_better)
+
+            # Update source tracking for weight adaptation
+            for smiles, source in new_mols_with_source:
+                molecule_sources[smiles] = source
+
+            # Adapt weights based on the top performers in the current gene pool
+            sampler_weights = self._adapt_weights(self.mol_population, molecule_sources)
+
+            # 6. Activate GA and Adapt Weights
+            if not ga_active and len(self.mol_population) >= self.mol_population_size:
+                ga_active = True
+                print("--- Genetic Algorithm Activated ---")
+                if sampler_weights['ga'] == 0.0:
+                    sampler_weights['ga'] = 0.2 
+            
+            # 7. Report Progress
+            self._print_iteration_stats(i, self.mol_population, threshold, optimized_molecules, sampler_weights)
+
+        else: # This 'else' belongs to the 'for' loop, executes if loop finishes without `break`
+            print(f"\nMax iterations ({max_iter}) reached. Collected {len(optimized_molecules)} out of {n_samples} desired molecules.")
+
+        # Sort the final collection and return the top n_samples
+        optimized_molecules.sort(key=lambda x: x[0], reverse=higher_is_better)
+        return [smiles for score, smiles in optimized_molecules[:n_samples]]
+
+    def _get_batch_counts(self, batch_size, normalized_weights):
+        """Calculates how many molecules to generate from each source for a batch."""
+        counts = {
+            'lg': int(batch_size * normalized_weights['lg']),
+            'sd': int(batch_size * normalized_weights['sd']),
+            'ga': int(batch_size * normalized_weights['ga'])
+        }
+        # Ensure the total is exactly batch_size by assigning remainder to the largest contributor
+        remainder = batch_size - sum(counts.values())
+        if remainder > 0:
+            largest_source = max(counts, key=counts.get)
+            counts[largest_source] += remainder
+        return counts
+    
+    def _print_iteration_stats(self, iter_num, population, threshold, collection, weights):
+        """Prints a summary of the current iteration."""
+        pool_scores = [score for score, _ in population]
+        mean_score = np.mean(pool_scores) if pool_scores else 0
+        max_score = np.max(pool_scores) if pool_scores else 0
+        
+        stats_str = f"Iter {iter_num}: Pool Mean Score={mean_score:.3f}, Pool Max Score={max_score:.3f}"
+        collection_str = f"Collected={len(collection)}"
+        weights_str = f"Weights: lg={weights.get('lg', 0):.2f}, sd={weights.get('sd', 0):.2f}, ga={weights.get('ga', 0):.2f}"
+        
+        print(f"{stats_str} | {collection_str} | {weights_str}")
+
+    # The helper methods _normalize_weights, _generate_molecules, and _adapt_weights
+    # can remain largely the same as in the previous refactoring.
+    # Make sure _adapt_weights uses the `self.mol_population` for its analysis.
+    def _normalize_weights(self, weights, ga_active):
+        """Normalizes the weights of the active samplers."""
+        active_weights = weights.copy()
+        if not ga_active:
+            active_weights['ga'] = 0.0
+        
+        total_weight = sum(active_weights.values())
+        if total_weight == 0: # Fallback if all weights are zero
+            return {'lg': 0.5, 'sd': 0.5, 'ga': 0.0}
+            
+        return {key: val / total_weight for key, val in active_weights.items()}
+
+    def _generate_molecules(self, n_samples_by_source, random_seed, mutation_rate, ga_active):
+        """Generates molecules from different sources."""
+        all_mols = []
+        if n_samples_by_source['lg'] > 0:
+            linker_mols = self.linker_generation(n_samples=n_samples_by_source['lg'], random_seed=random_seed)
+            all_mols.extend([(smiles, 'lg') for smiles in linker_mols])
+        
+        if n_samples_by_source['sd'] > 0:
+            scaffold_mols = self.scaffold_decoration(n_samples=n_samples_by_source['sd'], random_seed=random_seed)
+            all_mols.extend([(smiles, 'sd') for smiles in scaffold_mols])
+
+        if ga_active and n_samples_by_source['ga'] > 0 and self.mol_population:
+            ga_mols = [reproduce(self.mol_population, mutation_rate) for _ in range(n_samples_by_source['ga'])]
+            all_mols.extend([(smiles, 'ga') for smiles in ga_mols])
+            
+        return all_mols
+
+    def _adapt_weights(self, top_mols, molecule_sources):
+        """Adaptively updates sampler weights based on their contribution to the top molecules."""
+        source_counts = {'lg': 0, 'sd': 0, 'ga': 0}
+        for _, smiles in top_mols:
+            source = molecule_sources.get(smiles)
+            if source in source_counts:
+                source_counts[source] += 1
+        
+        total = sum(source_counts.values())
+
+        return {source: count / total for source, count in source_counts.items()}

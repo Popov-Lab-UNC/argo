@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=argo_workflow
-#SBATCH --partition=volta-gpu
+#SBATCH --partition=l40-gpu
 #SBATCH --gres=gpu:1
 #SBATCH --qos=gpu_access
 #SBATCH --cpus-per-task=8
@@ -15,8 +15,6 @@
 source $HOME/miniconda3/etc/profile.d/conda.sh
 conda activate f-rag
 
-# Load CUDA module
-module load cuda/12.5
 echo "CUDA_VISIBLE_DEVICES: $CUDA_VISIBLE_DEVICES"
 
 # Create logs directory if it doesn't exist
