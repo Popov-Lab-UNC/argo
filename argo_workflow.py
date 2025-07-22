@@ -133,8 +133,8 @@ batch_size = 100
 safegpt_task = GenerationTask(
     mode='de_novo',
     config={
-        'n_samples': batch_size,
-        'n_trials': n_de_novo // batch_size,
+        'n_samples': n_de_novo,
+        'batch_size': batch_size,
         'sanitize': True
     }
 )
@@ -147,7 +147,8 @@ for i, linker in enumerate(top_linkers):
         mode='scaffold_decoration',
         scaffold=linker,
         config={
-            'n_samples': 10,  # 10 molecules per linker
+            'n_samples': n_de_novo,  # Use n_de_novo for consistency
+            'batch_size': batch_size,
             'sanitize': True
         }
     )
@@ -159,7 +160,8 @@ for i, arm in enumerate(top_arms):
         mode='linker_generation',
         fragments=[arm, random.choice(top_arms)],
         config={
-            'n_samples': 10,  # 10 molecules per arm pairing
+            'n_samples': n_de_novo,  # Use n_de_novo for consistency
+            'batch_size': batch_size,
             'sanitize': True
         }
     )
@@ -188,8 +190,8 @@ for i in range(100):
 gem_de_novo_task = GenerationTask(
     mode='de_novo',
     config={
-        'n_samples': batch_size,
-        'n_trials': n_de_novo // batch_size,
+        'n_samples': n_de_novo,
+        'batch_size': batch_size,
     }
 )
 tasks.append(('GEM De Novo', gem_model, gem_de_novo_task))
@@ -245,8 +247,8 @@ gem_finetune_task = GenerationTask(
     mode='biased_generation',
     seed_smiles=cleaned_top_1_percent,
     config={
-        'n_samples': batch_size,
-        'n_trials': n_de_novo // batch_size,
+        'n_samples': n_de_novo,
+        'batch_size': batch_size,
     }
 )
 tasks.append(('GEM Fine-tuned', gem_model, gem_finetune_task))

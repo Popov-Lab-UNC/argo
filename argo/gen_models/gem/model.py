@@ -261,13 +261,16 @@ class GEM:
             logging.info(f"Fine-tuned model saved to {save_path}")
         return self.model
 
-    def generate(self, n_samples: int = 100, n_trials: int = 1):
-        total = n_samples * n_trials
+    def generate(self, n_samples: int = 1000, batch_size: int = 100):
+        self.model.to(self.device)
+        self.model.eval()
         all_generated = []
-        for _ in range(n_trials):
-            batch = self.model.generate(n_samples, self.device)
+        n_batches = (n_samples + batch_size - 1) // batch_size
+        for i in range(n_batches):
+            current_batch_size = min(batch_size, n_samples - len(all_generated))
+            batch = self.model.generate(current_batch_size, self.device)
             all_generated.extend(batch)
-        return all_generated
+        return all_generated[:n_samples]
     
     def save_checkpoint(self, save_path: str):
         torch.save(self.model.state_dict(), save_path)

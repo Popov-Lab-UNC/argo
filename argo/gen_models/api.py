@@ -84,57 +84,51 @@ class SAFEGenerator(BaseGenerator):
             designer = sf.SAFEDesign.load_default(device=device, verbose=False)
         self.designer = designer
 
-    def de_novo(self, 
-                n_samples: int = 10, 
-                n_trials: int = 1,
-                sanitize: bool = True
-    ) -> List[str]:
-        """Generates molecules from scratch."""
-        return self.designer.de_novo_generation(n_samples_per_trial=n_samples, 
-                                                n_trials=n_trials, 
-                                                sanitize=sanitize)
+    def de_novo(self, config: dict) -> List[str]:
+        n_samples = config.get('n_samples', 1000)
+        batch_size = config.get('batch_size', 100)
+        all_generated = []
+        n_batches = (n_samples + batch_size - 1) // batch_size
+        for i in range(n_batches):
+            current_batch_size = min(batch_size, n_samples - len(all_generated))
+            batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
+            all_generated.extend(batch)
+        return all_generated[:n_samples]
 
-    def scaffold_decoration(self, 
-                          scaffold: str, 
-                          n_samples: int = 10, 
-                          n_trials: int = 1,
-                          sanitize: bool = True,
-                          random_seed: int = 42
-    ) -> List[str]:
-        """Generates molecules by decorating a given scaffold."""
-        return self.designer.scaffold_decoration(scaffold=scaffold, 
-                                                 n_samples_per_trial=n_samples, 
-                                                 n_trials=n_trials, 
-                                                 sanitize=sanitize, 
-                                                 random_seed=random_seed)
+    def scaffold_decoration(self, scaffold: str, config: dict) -> List[str]:
+        n_samples = config.get('n_samples', 1000)
+        batch_size = config.get('batch_size', 100)
+        all_generated = []
+        n_batches = (n_samples + batch_size - 1) // batch_size
+        for i in range(n_batches):
+            current_batch_size = min(batch_size, n_samples - len(all_generated))
+            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
+            all_generated.extend(batch)
+        return all_generated[:n_samples]
 
-    def linker_generation(self, 
-                       fragment1: str, 
-                       fragment2: str, 
-                       n_samples: int = 10, 
-                       n_trials: int = 1, 
-                       sanitize: bool = True,
-                       random_seed: int = 42
-    ) -> List[str]:
-        """Generates linkers to connect two molecular fragments."""
-        return self.designer.linker_generation(fragment1, 
-                                               fragment2, 
-                                               n_samples_per_trial=n_samples, 
-                                               n_trials=n_trials, 
-                                               sanitize=sanitize,
-                                               random_seed=random_seed)
+    def linker_generation(self, fragment1: str, fragment2: str, config: dict) -> List[str]:
+        n_samples = config.get('n_samples', 1000)
+        batch_size = config.get('batch_size', 100)
+        all_generated = []
+        n_batches = (n_samples + batch_size - 1) // batch_size
+        for i in range(n_batches):
+            current_batch_size = min(batch_size, n_samples - len(all_generated))
+            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
+            all_generated.extend(batch)
+        return all_generated[:n_samples]
 
     def generate(self, task: GenerationTask) -> List[str]:
+        config = task.config or {}
         if task.mode == 'de_novo':
-            return self.de_novo(**task.config)
+            return self.de_novo(config)
         elif task.mode == 'scaffold_decoration':
             if not task.scaffold:
                 raise ValueError("A 'scaffold' must be provided for this task.")
-            return self.scaffold_decoration(task.scaffold, **task.config)
+            return self.scaffold_decoration(task.scaffold, config)
         elif task.mode == 'linker_generation':
             if not task.fragments or len(task.fragments) != 2:
                 raise ValueError("A list of two 'fragments' must be provided for this task.")
-            return self.linker_generation(task.fragments[0], task.fragments[1], **task.config)
+            return self.linker_generation(task.fragments[0], task.fragments[1], config)
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
@@ -264,10 +258,13 @@ class GEMGenerator(BaseGenerator):
         return
 
     def generate(self, task: GenerationTask) -> list:
+        config = task.config or {}
+        n_samples = config.get('n_samples', 1000)
+        batch_size = config.get('batch_size', 100)
         if task.mode == 'de_novo':
             if self.finetuned:
                 print("GEM is finetuned. De novo generation is biased generation.")
-            return self.gem.generate(**task.config)
+            return self.gem.generate(n_samples=n_samples, batch_size=batch_size)
         elif task.mode == 'biased_generation':
             if not task.seed_smiles:
                 raise ValueError("'seed_smiles', list of SMILES for biasing, must be provided for this task.")
@@ -275,7 +272,7 @@ class GEMGenerator(BaseGenerator):
                 task.seed_smiles = [task.seed_smiles]
             self.gem.fine_tune(task.seed_smiles, lr=1e-5, n_epochs=10, save_path=None)
             self.finetuned = True
-            return self.gem.generate(**task.config)
+            return self.gem.generate(n_samples=n_samples, batch_size=batch_size)
         else:
             raise NotImplementedError(f"GEM does not support the '{task.mode}' generation mode.")
 
