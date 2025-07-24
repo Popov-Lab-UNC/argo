@@ -312,7 +312,8 @@ class f_RAG:
             self.frag_population_size = new_frag_population_size
 
         if new_vocab is not None:
-            self.set_initial_population(new_vocab)
+            self.vocab = new_vocab
+            self.set_initial_population(self.vocab)
         else:
             self.set_initial_population(self.vocab)
 

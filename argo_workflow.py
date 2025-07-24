@@ -59,7 +59,7 @@ f_rag_model = GenerationModel('f-rag',
                               vocab=vocab.get_vocab(),
                               injection_model_path="argo/gen_models/pretrained/model.safetensors",
                               frag_population_size=50,
-                              mol_population_size=200,
+                              mol_population_size=500,
                               min_frag_size=5,
                               max_frag_size=30,
                               min_mol_size=10,
@@ -278,7 +278,7 @@ frag_optimize_task = GenerationTask(
     config={
         'n_samples': 1000,
         'random_seed': 42,
-        'batch_size': 100,
+        'batch_size': 500,
         'max_iter': 20
     }
 )
