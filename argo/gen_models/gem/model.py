@@ -7,6 +7,8 @@ import numpy as np
 from torch.utils.data import Dataset
 import logging
 
+from rdkit import Chem
+
 from . import utils
 
 # --- PyTorch Sub-modules for the Transformer ---
@@ -216,7 +218,13 @@ class Transformer(nn.Module):
 # --- Dataset for the Transformer ---
 class SmilesDataset(Dataset):
     def __init__(self, smiles: list, max_len=120, start_token='<', end_token='>', pad_token='X'):
-        self.smiles = smiles
+        valid_smiles = []
+        for smi in smiles:
+            if Chem.MolFromSmiles(smi) is not None:
+                valid_smiles.append(smi)
+            else:
+                logging.warning(f"Invalid SMILES excluded: {smi}")
+        self.smiles = valid_smiles
         self.max_len = max_len
         self.start_token = start_token
         self.end_token = end_token
