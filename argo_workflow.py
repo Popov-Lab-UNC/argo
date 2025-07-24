@@ -1,12 +1,14 @@
 import os
 import pandas as pd
+import numpy as np
 from rdkit import Chem
 from argo.gen_models.api import GenerationModel, GenerationTask
 from argo.vocab import FragmentVocabulary
 from tqdm import tqdm
-import torch
-import time
+import torch, joblib
+import time, random
 from typing import List, Dict, Any
+from argo.utils import clean_smiles, build_filter_model, apply_filter_to_results, run_generation_task
 
 # Load environment variables from .env file
 try:
@@ -69,56 +71,6 @@ f_rag_model = GenerationModel('f-rag',
 
 print('All four generative models instantiated.')
 
-# 7. Generation Tasks with Timing
-def run_generation_task(model: GenerationModel, task: GenerationTask, task_name: str) -> Dict[str, Any]:
-    """
-    Run a generation task and track timing.
-    
-    Args:
-        model: The generation model to use
-        task: The generation task configuration
-        task_name: Name for the task (for logging)
-        
-    Returns:
-        Dictionary with results and timing information
-    """
-    print(f"\n=== Running {task_name} ===")
-    start_time = time.time()
-    
-    try:
-        results = model.generate(task)
-        end_time = time.time()
-        duration = end_time - start_time
-        
-        print(f"✓ {task_name} completed in {duration:.2f} seconds")
-        print(f"  Generated {len(results)} molecules")
-        
-        return {
-            'task_name': task_name,
-            'model_type': type(model).__name__,
-            'results': results,
-            'duration': duration,
-            'success': True
-        }
-        
-    except Exception as e:
-        end_time = time.time()
-        duration = end_time - start_time
-        print(f"✗ {task_name} failed after {duration:.2f} seconds: {e}")
-        
-        return {
-            'task_name': task_name,
-            'model_type': type(model).__name__,
-            'results': [],
-            'duration': duration,
-            'success': False,
-            'error': str(e)
-        }
-
-# Get top compounds and fragments
-top_100_compounds = df.head(100)['smiles'].tolist()
-top_1_percent = df.head(int(len(df) * 0.01))['smiles'].tolist()
-
 # Get top fragments from vocabulary
 vocab_df = vocab.get_vocab()
 top_arms = vocab_df[vocab_df['type'] == 'arm'].head(10)['frag'].tolist()
@@ -126,10 +78,9 @@ top_linkers = vocab_df[vocab_df['type'] == 'linker'].head(10)['frag'].tolist()
 
 # Define generation tasks
 tasks = []
+n_de_novo = 1000
+batch_size = 200
 
-# 1. SAFE-GPT: De novo generation
-n_de_novo = 1000  # You can adjust this value
-batch_size = 100
 safegpt_task = GenerationTask(
     mode='de_novo',
     config={
@@ -140,15 +91,13 @@ safegpt_task = GenerationTask(
 )
 tasks.append(('SAFE-GPT De Novo', safegpt_model, safegpt_task))
 
-import random
-# 1b. SAFE-GPT: Scaffold decoration using top arms
 for i, linker in enumerate(top_linkers):
     safegpt_scaffold_task = GenerationTask(
         mode='scaffold_decoration',
         scaffold=linker,
         config={
-            'n_samples': n_de_novo,  # Use n_de_novo for consistency
-            'batch_size': batch_size,
+            'n_samples': n_de_novo // 10,  # Use n_de_novo for consistency
+            'batch_size': batch_size // 10,
             'sanitize': True
         }
     )
@@ -160,14 +109,12 @@ for i, arm in enumerate(top_arms):
         mode='linker_generation',
         fragments=[arm, random.choice(top_arms)],
         config={
-            'n_samples': n_de_novo,  # Use n_de_novo for consistency
-            'batch_size': batch_size,
+            'n_samples': n_de_novo // 10,  # Use n_de_novo for consistency
+            'batch_size': batch_size // 10,
             'sanitize': True
         }
     )
     tasks.append((f'SAFE-GPT Linker Generation {i+1}', safegpt_model, safegpt_linker_task))
-
-
 
 # 2. MolMiM: Biased generation based on top 100 compounds
 # Generate 1000 molecules total (100 batches of 10 each)
@@ -196,56 +143,9 @@ gem_de_novo_task = GenerationTask(
 )
 tasks.append(('GEM De Novo', gem_model, gem_de_novo_task))
 
-# GEM fine-tune task (will be run after initial generation)
-# Clean the seed SMILES to remove any spaces or invalid characters
-def clean_smiles(smiles_list):
-    """Clean SMILES strings by removing spaces and stereochemical annotations"""
-    cleaned = []
-    
-    for i, smiles in enumerate(smiles_list):
-        # Remove leading/trailing whitespace and any internal spaces
-        cleaned_smiles = smiles.strip().replace(' ', '')
-        
-        # Handle stereochemical annotations (anything after |)
-        if '|' in cleaned_smiles:
-            # Split on | and take only the first part (the actual SMILES)
-            parts = cleaned_smiles.split('|')
-            cleaned_smiles = parts[0]
-            if len(parts) > 1:
-                print(f"  Removed stereochemical annotation from SMILES {i}: '{parts[1]}'")
-        
-        if cleaned_smiles:  # Only keep non-empty strings
-            cleaned.append(cleaned_smiles)
-    
-    return cleaned
-
-'''
-# Analyze the characters in the original SMILES
-print(f"Analyzing SMILES characters...")
-all_chars = set()
-pipes_found = []
-for i, smiles in enumerate(top_1_percent):
-    all_chars.update(smiles)
-    if '|' in smiles:
-        pipes_found.append((i, smiles))
-print(f"  All unique characters in SMILES: {sorted(all_chars)}")
-print(f"  Character count: {len(all_chars)}")
-if pipes_found:
-    print(f"  Found {len(pipes_found)} SMILES with | character:")
-    for idx, smiles in pipes_found[:5]:  # Show first 5
-        print(f"    Index {idx}: '{smiles}'")
-else:
-    print(f"  No | characters found in SMILES")
-'''
-
-cleaned_top_1_percent = clean_smiles(top_1_percent)
-print(f"Cleaned {len(top_1_percent)} seed SMILES, kept {len(cleaned_top_1_percent)} valid entries")
-if len(top_1_percent) != len(cleaned_top_1_percent):
-    print(f"  Removed {len(top_1_percent) - len(cleaned_top_1_percent)} entries with spaces or invalid characters")
-
 gem_finetune_task = GenerationTask(
     mode='biased_generation',
-    seed_smiles=cleaned_top_1_percent,
+    seed_smiles=clean_smiles(df.head(100)['smiles'].tolist()),
     config={
         'n_samples': n_de_novo,
         'batch_size': batch_size,
@@ -257,7 +157,7 @@ tasks.append(('GEM Fine-tuned', gem_model, gem_finetune_task))
 frag_linker_task = GenerationTask(
     mode='linker_generation',
     config={
-        'n_samples': 1000,
+        'n_samples': n_de_novo,
         'random_seed': 42
     }
 )
@@ -266,7 +166,7 @@ tasks.append(('f-RAG Linker Generation', f_rag_model, frag_linker_task))
 frag_scaffold_task = GenerationTask(
     mode='scaffold_decoration',
     config={
-        'n_samples': 1000,
+        'n_samples': n_de_novo,
         'random_seed': 42
     }
 )
@@ -276,7 +176,7 @@ frag_optimize_task = GenerationTask(
     mode='property_optimization',
     objective='qed',
     config={
-        'n_samples': 1000,
+        'n_samples': n_de_novo,
         'random_seed': 42,
         'batch_size': 500,
         'max_iter': 20
@@ -394,111 +294,16 @@ print(f"\n{'='*60}")
 print("LOADING AND APPLYING FILTER MODEL")
 print(f"{'='*60}")
 
-from argo.filter_models import SmilesFilterModel
-import numpy as np
 
-def build_filter_model(df: pd.DataFrame, smiles_col: str = 'smiles', score_col: str = 'score', 
-                      threshold_percentile: float = 10.0) -> SmilesFilterModel:
-    """
-    Build a filter model using the CHD1 data.
-    
-    Args:
-        df: DataFrame with SMILES and scores
-        smiles_col: Column name for SMILES
-        score_col: Column name for scores
-        threshold_percentile: Percentile to use as threshold for good/bad classification
-        
-    Returns:
-        Trained SmilesFilterModel
-    """
-    print(f"Building filter model using {len(df)} compounds...")
-    
-    # Get SMILES and scores
-    smiles = df[smiles_col].tolist()
-    scores = df[score_col].values
-    
-    # Create binary labels based on percentile threshold
-    threshold = np.percentile(scores, threshold_percentile)
-    labels = (scores <= threshold).astype(int)  # 1 for good compounds (lower scores), 0 for bad
-    
-    print(f"  Score threshold: {threshold:.4f} (top {threshold_percentile}% of compounds)")
-    print(f"  Good compounds (label=1): {np.sum(labels)}")
-    print(f"  Bad compounds (label=0): {len(labels) - np.sum(labels)}")
-    
-    # Train the filter model
-    filter_model = SmilesFilterModel()
-    filter_model.train(smiles, labels)
-    
-    print(f"✓ Filter model trained successfully")
-    return filter_model
-
-def apply_filter_to_results(filter_model: SmilesFilterModel, all_results: List[Dict[str, Any]], 
-                          conf_thresh: float = 0.6) -> Dict[str, Dict[str, Any]]:
-    """
-    Apply the filter model to all generated compounds and report results.
-    
-    Args:
-        filter_model: Trained SmilesFilterModel
-        all_results: List of generation results
-        conf_thresh: Confidence threshold for filtering
-        
-    Returns:
-        Dictionary with filtering results for each task
-    """
-    print(f"\nApplying filter model to generated compounds (confidence threshold: {conf_thresh})...")
-    
-    filtering_results = {}
-    
-    for result in all_results:
-        if not result['success'] or len(result['results']) == 0:
-            continue
-            
-        task_name = result['task_name']
-        molecules = result['results']
-        
-        print(f"\n  Filtering {task_name} ({len(molecules)} molecules)...")
-        
-        # Apply filter
-        try:
-            filtered_molecules = filter_model.filter(molecules, conf_thresh=conf_thresh)
-            pass_rate = len(filtered_molecules) / len(molecules) * 100
-            
-            print(f"    ✓ {len(filtered_molecules)}/{len(molecules)} molecules passed filter ({pass_rate:.1f}%)")
-            
-            filtering_results[task_name] = {
-                'total_molecules': len(molecules),
-                'passed_filter': len(filtered_molecules),
-                'pass_rate': pass_rate,
-                'filtered_molecules': filtered_molecules,
-                'duration': result['duration'],
-                'model_type': result['model_type']
-            }
-            
-        except Exception as e:
-            print(f"    ✗ Error filtering {task_name}: {e}")
-            filtering_results[task_name] = {
-                'total_molecules': len(molecules),
-                'passed_filter': 0,
-                'pass_rate': 0.0,
-                'filtered_molecules': [],
-                'duration': result['duration'],
-                'model_type': result['model_type'],
-                'error': str(e)
-            }
-    
-    return filtering_results
-
-'''
 # Build the filter model
-filter_model = build_filter_model(df, 'smiles', 'score', threshold_percentile=20.0)
+#filter_model = build_filter_model(df, 'smiles', 'score', threshold_percentile=20.0)
 
 # Save the filter model
-filter_model.save('chd1_filter_model.joblib')
-print(f"✓ Filter model saved to 'chd1_filter_model.joblib'")
-'''
+#filter_model.save('chd1_filter_model.joblib')
+#print(f"✓ Filter model saved to 'chd1_filter_model.joblib'")
 
-# Load the filter model
-filter_model = SmilesFilterModel.load('chd1_filter_model.joblib')
+filter_model = joblib.load('chd1_filter_model.joblib')
+print(f"✓ Loaded filter model from 'chd1_filter_model.joblib'")
 
 # Apply filter to all results
 filtering_results = apply_filter_to_results(filter_model, all_results, conf_thresh=0.6)
