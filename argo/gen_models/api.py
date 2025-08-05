@@ -137,23 +137,41 @@ class MolMIMGenerator(BaseGenerator):
     """
     Interface for the MolMiM API for property-guided molecule optimization.
     """
-    def __init__(self, api_token: str):
-        if not api_token:
-            raise ValueError("An 'api_token' is required for the MolMIM model.")
+    def __init__(self, base_url: str = "http://localhost:8000", api_token: str | None = None):
+        # if not api_token:
+        #     raise ValueError("An 'api_token' is required for the MolMIM model.")
         super().__init__(use_cuda=False)
         self.api_token = api_token
-        self.generate_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
-        self.sample_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/sample"
+        self.base_url = base_url.rstrip("/")
+        self.generate_url = f"{self.base_url}/generate"
+        # self.generate_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
+        # self.sample_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/sample"
 
     def _call_api(self, payload: Dict[str, Any], url: str) -> List[str]:
         """Internal method to handle the API request."""
-        headers = {"Authorization": f"Bearer {self.api_token}", "Accept": "application/json"}
-        session = requests.Session()
-        response = session.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-        response_body = response.json()
-        molecules = json.loads(response_body['molecules'])
-        return [mol['sample'] for mol in molecules]
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
+        if self.api_token:
+            headers["Authorization"] = f"Bearer {self.api_token}"
+        r = requests.post(url, headers=headers, json=payload, timeout=300)
+        r.raise_for_status()
+        data = r.json()
+
+        if "sequences" in data:
+            return data["sequences"]
+        elif "molecules" in data:                    
+            return [m["sample"] for m in json.loads(data["molecules"])]
+        elif "generated" in data:
+            return [m["smiles"] for m in data["generated"]]
+        else:
+            print("Unexpected API response:", data)
+            raise KeyError("MolMIM API response missing expected keys.")
+        # headers = {"Authorization": f"Bearer {self.api_token}", "Accept": "application/json"}
+        # session = requests.Session()
+        # response = session.post(url, headers=headers, json=payload)
+        # response.raise_for_status()
+        # response_body = response.json()
+        # molecules = json.loads(response_body['molecules'])
+        # return [mol['sample'] for mol in molecules]
 
     def optimize(self, 
                  seed_smiles: str, 
