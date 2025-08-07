@@ -43,7 +43,7 @@ def test_safegpt_scaffold_decoration(safegpt_model):
     )
     result = safegpt_model.generate(task)
     assert isinstance(result, list)
-    assert len(result) == 5
+    assert len(result) == 5, f"Expected exactly 5 valid molecules, got {len(result)}"
     for smi in result:
         assert isinstance(smi, str)
 
@@ -62,6 +62,6 @@ def test_safegpt_linker_generation(safegpt_model):
     )
     result = safegpt_model.generate(task)
     assert isinstance(result, list)
-    assert len(result) == 5
+    assert len(result) == 5, f"Expected exactly 5 valid molecules, got {len(result)}"
     for smi in result:
         assert isinstance(smi, str)

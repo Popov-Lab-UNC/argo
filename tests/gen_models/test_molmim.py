@@ -2,8 +2,7 @@ import pytest
 import os
 from argo.gen_models import GenerationModel, GenerationTask
 
-# Get MolMIM server address from environment variable
-MOLMIM_SERVER_ADDRESS = os.environ.get("MOLMIM_SERVER_ADDRESS")
+MOLMIM_SERVER_ADDRESS = "g0310:8000"
 
 @pytest.fixture(scope="module")
 def molmim_model():

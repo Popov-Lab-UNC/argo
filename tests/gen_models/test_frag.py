@@ -68,7 +68,7 @@ def test_f_rag_property_optimization(frag_model):
             "n_samples": 5,
             "random_seed": 42,
             "batch_size": 5,
-            "max_iter": 2, # Keep it short for testing
+            "max_iter": 10, # Keep it short for testing
         }
     )
     result = frag_model.generate(task)

@@ -8,15 +8,39 @@ from abc import ABC, abstractmethod
 from typing import List, Callable, Optional, Dict, Any, Literal, Union
 from dataclasses import dataclass, field
 import torch
+from rdkit import Chem
 
 # Suppress warnings from libraries for a cleaner user experience
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="huggingface_hub.file_download")
 warnings.filterwarnings("ignore", category=UserWarning, module="transformers.generation.configuration_utils")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="pandas.core.dtypes.cast")
+warnings.filterwarnings("ignore", category=DeprecationWarning, module="numpy")
 
 # Backend model imports
 from argo.gen_models.f_rag.model import f_RAG
 from argo.gen_models.gem.model import GEM
+
+def validate_smiles(smiles: str) -> bool:
+    if not isinstance(smiles, str) or not smiles.strip():
+        return False
+    
+    smiles = smiles.strip()
+
+    try:
+        # Parse SMILES to RDKit molecule
+        mol = Chem.MolFromSmiles(smiles)
+        if mol is None:
+            return False
+        
+        # Convert back to SMILES to ensure consistency
+        canonical_smiles = Chem.MolToSmiles(mol, canonical=True)
+        if not canonical_smiles:
+            return False
+
+        return True
+    except Exception:
+        return False
 
 # --- A structured way to define a generation task ---
 @dataclass
@@ -104,35 +128,59 @@ class SAFEGenerator(BaseGenerator):
     def de_novo(self, config: dict) -> List[str]:
         n_samples = config.get('n_samples', 1000)
         batch_size = config.get('batch_size', 100)
-        all_generated = []
-        n_batches = (n_samples + batch_size - 1) // batch_size
-        for i in range(n_batches):
-            current_batch_size = min(batch_size, n_samples - len(all_generated))
-            batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
-            all_generated.extend(batch)
-        return all_generated[:n_samples]
+        sanitize = config.get('sanitize', True)
+        valid_generated = []
+        
+        while len(valid_generated) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+            batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            
+            # Filter valid SMILES
+            for smi in batch:
+                if validate_smiles(smi):
+                    valid_generated.append(smi)
+                    if len(valid_generated) >= n_samples:
+                        break
+            
+        return valid_generated[:n_samples]
 
     def scaffold_decoration(self, scaffold: str, config: dict) -> List[str]:
         n_samples = config.get('n_samples', 1000)
         batch_size = config.get('batch_size', 100)
-        all_generated = []
-        n_batches = (n_samples + batch_size - 1) // batch_size
-        for i in range(n_batches):
-            current_batch_size = min(batch_size, n_samples - len(all_generated))
-            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
-            all_generated.extend(batch)
-        return all_generated[:n_samples]
+        sanitize = config.get('sanitize', True)
+        valid_generated = []
+        
+        while len(valid_generated) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            
+            # Filter valid SMILES
+            for smi in batch:
+                if validate_smiles(smi):
+                    valid_generated.append(smi)
+                    if len(valid_generated) >= n_samples:
+                        break
+            
+        return valid_generated[:n_samples]
 
     def linker_generation(self, fragment1: str, fragment2: str, config: dict) -> List[str]:
         n_samples = config.get('n_samples', 1000)
         batch_size = config.get('batch_size', 100)
-        all_generated = []
-        n_batches = (n_samples + batch_size - 1) // batch_size
-        for i in range(n_batches):
-            current_batch_size = min(batch_size, n_samples - len(all_generated))
-            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size']})
-            all_generated.extend(batch)
-        return all_generated[:n_samples]
+        sanitize = config.get('sanitize', True)
+        valid_generated = []
+        
+        while len(valid_generated) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            
+            # Filter valid SMILES
+            for smi in batch:
+                if validate_smiles(smi):
+                    valid_generated.append(smi)
+                    if len(valid_generated) >= n_samples:
+                        break
+            
+        return valid_generated[:n_samples]
 
     def generate(self, task: GenerationTask) -> List[str]:
         config = task.config or {}
