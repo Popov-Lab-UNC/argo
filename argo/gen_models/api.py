@@ -1,6 +1,6 @@
 # argo/gen_models/api.py
 
-import os
+import os, subprocess, shutil, time
 import requests
 import json
 import pandas as pd
@@ -132,28 +132,84 @@ class SAFEGenerator(BaseGenerator):
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
-
-class MolMIMGenerator(BaseGenerator):
+class MolMIMClient(BaseGenerator):
     """
-    Interface for the MolMiM API for property-guided molecule optimization.
-    """
-    def __init__(self, api_token: str):
-        if not api_token:
-            raise ValueError("An 'api_token' is required for the MolMIM model.")
-        super().__init__(use_cuda=False)
-        self.api_token = api_token
-        self.generate_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/generate"
-        self.sample_url = "https://health.api.nvidia.com/v1/biology/nvidia/molmim/sample"
+    A client for an already running MolMIM container service.
 
-    def _call_api(self, payload: Dict[str, Any], url: str) -> List[str]:
-        """Internal method to handle the API request."""
-        headers = {"Authorization": f"Bearer {self.api_token}", "Accept": "application/json"}
+    This class connects to a specified server address, verifies the service is
+    healthy, and provides methods to interact with the MolMIM API.
+    
+    The server process must be started and managed separately.
+    """
+
+    def __init__(self, server_address: str):
+        """
+        Initializes the client and connects to the specified server address.
+
+        Args:
+            server_address (str): The address of the running MolMIM service,
+                                  formatted as "hostname:port".
+        """
+        super().__init__(use_cuda=True)
+        
+        if not server_address or ":" not in server_address:
+            raise ValueError("Invalid server_address format. Expected 'hostname:port'.")
+
+        self.base_url = f"http://{server_address}"
+        print(f"Attempting to connect to MolMIM service at: {self.base_url}")
+
+        # Immediately perform a health check to ensure the server is ready.
+        self._health_check()
+
+    def _health_check(self):
+        """
+        Verifies that the server is running and ready to accept requests.
+        Raises an error if the health check fails.
+        """
+        health_endpoint = f"{self.base_url}/v1/health/ready"
+        try:
+            response = requests.get(health_endpoint, timeout=5)
+            
+            # Check for a successful HTTP status code
+            response.raise_for_status() # Raises HTTPError for 4xx/5xx responses
+            
+            # Check the content of the response
+            if response.json().get("status") == "ready":
+                print("Connection successful. MolMIM service is ready.")
+            else:
+                raise ConnectionError(
+                    f"Service at {self.base_url} is running but not ready. "
+                    f"Response: {response.text}"
+                )
+
+        except requests.exceptions.RequestException as e:
+            # Catches connection errors, timeouts, and HTTP errors
+            raise ConnectionError(
+                f"Failed to connect or verify server at {health_endpoint}. "
+                f"Please ensure the server is running and accessible. Error: {e}"
+            ) from e
+
+    def _call_api(self, payload: Dict[str, Any], endpoint: str) -> List[str]:
+        """Internal method to handle the API request to the server."""
+        url = f"{self.base_url}{endpoint}"
+        headers = {"Accept": "application/json", "Content-Type": "application/json"}
         session = requests.Session()
         response = session.post(url, headers=headers, json=payload)
         response.raise_for_status()
+        
+        if response.status_code != 200:
+            raise requests.HTTPError(
+                f"MolMIM API Error: {response.status_code} {response.text}"
+            )
+        
         response_body = response.json()
-        molecules = json.loads(response_body['molecules'])
-        return [mol['sample'] for mol in molecules]
+        
+        # Extract molecules from the 'generated' key
+        if 'generated' in response_body:
+            molecules = response_body['generated']
+            return [mol['smiles'] for mol in molecules]
+        else:
+            raise ValueError(f"Unexpected API response format. Expected 'generated' key, got: {list(response_body.keys())}")
 
     def optimize(self, 
                  seed_smiles: str, 
@@ -196,47 +252,24 @@ class MolMIMGenerator(BaseGenerator):
                    "property_name": property_name, 
                    "scaled_radius": scaled_radius
         }
-        return self._call_api(payload, url=self.generate_url)
-    
-    '''
-    def sample(self, 
-               seed_smiles: str, 
-               n_samples: int = 10, 
-               beam_size: int = 1, 
-               scaled_radius: float = 0.7
-    ) -> List[str]:
-        """Samples molecules from the MolMiM API using the 'sample' endpoint."""
-        
-        # Validate parameters are within allowed ranges
-        if n_samples < 1 or n_samples > 10:
-            raise ValueError("n_samples must be between 1 and 10")
-        if beam_size < 1 or beam_size > 10:
-            raise ValueError("beam_size must be between 1 and 10") 
-        if scaled_radius < 0.0 or scaled_radius > 2.0:
-            raise ValueError("scaled_radius must be between 0.0 and 2.0")
-
-        payload = {
-            "sequences": [seed_smiles],
-            "num_molecules": n_samples,
-            "beam_size": beam_size,
-            "scaled_radius": scaled_radius
-        }
-        return self._call_api(payload, url=self.sample_url)
-    '''
+        return self._call_api(payload, endpoint="/generate")
 
     def generate(self, task: GenerationTask) -> List[str]:
         if not task.seed_smiles or not isinstance(task.seed_smiles, str):
             raise ValueError("A single 'seed_smiles' string must be provided for MolMiM.")
         
+        if task.objective:
+            objective = task.objective
+        else:
+            objective = 'QED'
+        
         if task.mode == 'property_optimization':
-            return self.optimize(seed_smiles=task.seed_smiles, algorithm='CMA-ES', **task.config)
+            return self.optimize(seed_smiles=task.seed_smiles, algorithm='CMA-ES', property_name=objective, **task.config)
         elif task.mode == 'biased_generation':
             return self.optimize(seed_smiles=task.seed_smiles, algorithm='none', **task.config)
-            #return self.sample(seed_smiles=task.seed_smiles, **task.config)
         else:
             raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
-
-
+        
 class GEMGenerator(BaseGenerator):
     """
     Interface for the GEM model workflow for fine-tuning and generation.
@@ -348,7 +381,8 @@ def GenerationModel(
     if model_type == 'safegpt':
         return SAFEGenerator(**kwargs)
     if model_type == 'molmim':
-        return MolMIMGenerator(**kwargs)
+        #return MolMIMGenerator(**kwargs)
+        return MolMIMClient(**kwargs)
     if model_type == 'gem':
         return GEMGenerator(**kwargs)
     if model_type == 'f-rag':
