@@ -4,6 +4,7 @@ import os, subprocess, shutil, time
 import requests
 import json
 import pandas as pd
+import logging
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional, Dict, Any, Literal, Union
 from dataclasses import dataclass, field
@@ -325,24 +326,49 @@ class MolMIMClient(BaseGenerator):
 
         objective = task.objective or 'QED'
         config = task.config or {}
+        n_samples = config.get('n_samples', 10)
+        batch_size = config.get('batch_size', 10)
 
         optimize_params = {
             "seed_smiles": task.seed_smiles,
             "iterations": config.get('iterations', 10),
             "min_similarity": config.get('min_similarity', 0.7),
             "minimize": config.get('minimize', False),
-            "n_samples": config.get('n_samples', 10),
             "particles": config.get('particles', 30),
             "property_name": objective,
             "scaled_radius": config.get('scaled_radius', 1.0)
         }
 
+        generation_fn = None
         if task.mode == 'property_optimization':
-            return self.optimize(algorithm='CMA-ES', **optimize_params)
+            generation_fn = lambda n: self.optimize(algorithm='CMA-ES', n_samples=n, **optimize_params)
         elif task.mode == 'biased_generation':
-            return self.optimize(algorithm='none', **optimize_params)
+            generation_fn = lambda n: self.optimize(algorithm='none', n_samples=n, **optimize_params)
         else:
             raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
+
+        valid_smiles = []
+        generated_count = 0
+        while len(valid_smiles) < n_samples:
+            try:
+                smiles_batch = generation_fn(batch_size)
+                if not smiles_batch:
+                    logging.warning("MolMIMClient.generate returned no SMILES. Stopping generation.")
+                    break
+                generated_count += len(smiles_batch)
+
+                for smi in smiles_batch:
+                    if validate_smiles(smi):
+                        valid_smiles.append(smi)
+            except requests.exceptions.RequestException as e:
+                logging.error(f"MolMIM API call failed: {e}. Stopping generation.")
+                break
+
+        if generated_count > 0:
+            validity = len(valid_smiles) / generated_count * 100
+            logging.info(f"MolMIMClient: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+
+        return valid_smiles[:n_samples]
 
 class GEMGenerator(BaseGenerator):
     """
@@ -368,10 +394,10 @@ class GEMGenerator(BaseGenerator):
         config = task.config or {}
         n_samples = config.get('n_samples', 1000)
         batch_size = config.get('batch_size', 100)
+
         if task.mode == 'de_novo':
             if self.finetuned:
                 print("GEM is finetuned. De novo generation is biased generation.")
-            return self.gem.generate(n_samples=n_samples, batch_size=batch_size)
         elif task.mode == 'biased_generation':
             if not task.seed_smiles:
                 raise ValueError("'seed_smiles', list of SMILES for biasing, must be provided for this task.")
@@ -379,9 +405,27 @@ class GEMGenerator(BaseGenerator):
                 task.seed_smiles = [task.seed_smiles]
             self.gem.fine_tune(task.seed_smiles, lr=1e-5, n_epochs=10, save_path=None)
             self.finetuned = True
-            return self.gem.generate(n_samples=n_samples, batch_size=batch_size)
         else:
             raise NotImplementedError(f"GEM does not support the '{task.mode}' generation mode.")
+
+        valid_smiles = []
+        generated_count = 0
+        while len(valid_smiles) < n_samples:
+            smiles_batch = self.gem.generate(n_samples=batch_size, batch_size=batch_size)
+            if not smiles_batch:
+                logging.warning("GEMGenerator.generate returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(smiles_batch)
+
+            for smi in smiles_batch:
+                if validate_smiles(smi):
+                    valid_smiles.append(smi)
+
+        if generated_count > 0:
+            validity = len(valid_smiles) / generated_count * 100
+            logging.info(f"GEMGenerator: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+
+        return valid_smiles[:n_samples]
 
 class F_RAGGenerator(BaseGenerator):
     """
@@ -402,34 +446,57 @@ class F_RAGGenerator(BaseGenerator):
         )
 
     def generate(self, task: GenerationTask) -> list:
+        config = task.config or {}
+        generation_fn = None
+
         if task.mode == "linker_generation":
-            config = task.config or {}
             n_samples = config.get('n_samples', 10)
             random_seed = config.get('random_seed', 42)
-            return self.f_rag.linker_generation(n_samples=n_samples, random_seed=random_seed)
+            generation_fn = lambda n: self.f_rag.linker_generation(n_samples=n, random_seed=random_seed)
         elif task.mode == "scaffold_decoration":
-            # Scaffold can be None, in which case a random scaffold in vocabulary will be used
-            config = task.config or {}
             n_samples = config.get('n_samples', 10)
             random_seed = config.get('random_seed', 42)
-            return self.f_rag.scaffold_decoration(n_samples=n_samples, scaffold=task.scaffold, random_seed=random_seed)
+            generation_fn = lambda n: self.f_rag.scaffold_decoration(n_samples=n, scaffold=task.scaffold, random_seed=random_seed)
         elif task.mode == "property_optimization":
+            n_samples = config.get('n_samples', 10)
             if not task.objective:
                 raise ValueError("'objective' must be provided for this task.")
-            config = task.config or {}
-            n_samples = config.get('n_samples', 10)
             threshold = config.get('threshold', 0.8)
             max_iter = config.get('max_iter', 10)
-            random_seed = config.get('random_seed', 42)
             higher_is_better = config.get('higher_is_better', True)
-            batch_size = config.get('batch_size', 50)
+            opt_batch_size = config.get('batch_size', 50)
             mutation_rate = config.get('mutation_rate', 0.01)
             init_lg_wt = config.get('init_lg_wt', 0.5)
             init_sd_wt = config.get('init_sd_wt', 0.5)
             init_ga_wt = config.get('init_ga_wt', 0.0)
-            return self.f_rag.optimize(n_samples=n_samples, oracle_name=task.objective, threshold=threshold, max_iter=max_iter, higher_is_better=higher_is_better, batch_size=batch_size, mutation_rate=mutation_rate, init_lg_wt=init_lg_wt, init_sd_wt=init_sd_wt, init_ga_wt=init_ga_wt)
+            generation_fn = lambda n: self.f_rag.optimize(
+                n_samples=n, oracle_name=task.objective, threshold=threshold, max_iter=max_iter,
+                higher_is_better=higher_is_better, batch_size=opt_batch_size,
+                mutation_rate=mutation_rate, init_lg_wt=init_lg_wt, init_sd_wt=init_sd_wt,
+                init_ga_wt=init_ga_wt
+            )
         else:
             raise NotImplementedError(f"f-RAG does not support the '{task.mode}' generation mode.")
+
+        batch_size = config.get('batch_size', 10)
+        valid_smiles = []
+        generated_count = 0
+        while len(valid_smiles) < n_samples:
+            smiles_batch = generation_fn(batch_size)
+            if not smiles_batch:
+                logging.warning("F_RAGGenerator generation function returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(smiles_batch)
+
+            for smi in smiles_batch:
+                if validate_smiles(smi):
+                    valid_smiles.append(smi)
+
+        if generated_count > 0:
+            validity = len(valid_smiles) / generated_count * 100
+            logging.info(f"F_RAGGenerator: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+
+        return valid_smiles[:n_samples]
 
 
 def GenerationModel(
