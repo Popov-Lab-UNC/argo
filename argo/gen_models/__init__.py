@@ -408,8 +408,7 @@ class F_RAGGenerator(BaseGenerator):
             random_seed = config.get('random_seed', 42)
             return self.f_rag.linker_generation(n_samples=n_samples, random_seed=random_seed)
         elif task.mode == "scaffold_decoration":
-            if not task.scaffold:
-                raise ValueError("A 'scaffold' must be provided for this task.")
+            # Scaffold can be None, in which case a random scaffold in vocabulary will be used
             config = task.config or {}
             n_samples = config.get('n_samples', 10)
             random_seed = config.get('random_seed', 42)

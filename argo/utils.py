@@ -42,6 +42,7 @@ def build_filter_model(df: pd.DataFrame, smiles_col: str = 'smiles', score_col: 
     smiles = df[smiles_col].tolist()
     scores = df[score_col].values
     threshold = np.percentile(scores, threshold_percentile)
+    print(f"Training filter model with threshold: {threshold}")
     labels = (scores <= threshold).astype(int)
     filter_model = SmilesFilterModel()
     filter_model.train(smiles, labels)
