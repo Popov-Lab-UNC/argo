@@ -47,6 +47,42 @@ def test_safegpt_scaffold_decoration(safegpt_model):
     for smi in result:
         assert isinstance(smi, str)
 
+def test_safegpt_scaffold_decoration_list_iterate(safegpt_model):
+    """Test SAFE-GPT scaffold decoration with a list of scaffolds (iterate)."""
+    scaffolds = ["[*]c1ccccc1[*]", "[*]C1CC1[*]"]
+    task = GenerationTask(
+        mode='scaffold_decoration',
+        scaffold=scaffolds,
+        config={
+            "n_samples": 4,
+            "batch_size": 2,
+            "processing_mode": "iterate"
+        }
+    )
+    result = safegpt_model.generate(task)
+    assert isinstance(result, list)
+    assert len(result) == 4
+    for smi in result:
+        assert isinstance(smi, str)
+
+def test_safegpt_scaffold_decoration_list_sample(safegpt_model):
+    """Test SAFE-GPT scaffold decoration with a list of scaffolds (sample)."""
+    scaffolds = ["[*]c1ccccc1[*]", "[*]C1CC1[*]"]
+    task = GenerationTask(
+        mode='scaffold_decoration',
+        scaffold=scaffolds,
+        config={
+            "n_samples": 4,
+            "batch_size": 2,
+            "processing_mode": "sample"
+        }
+    )
+    result = safegpt_model.generate(task)
+    assert isinstance(result, list)
+    assert len(result) == 4
+    for smi in result:
+        assert isinstance(smi, str)
+
 def test_safegpt_linker_generation(safegpt_model):
     """Test SAFE-GPT linker generation."""
     fragment1 = "[*]N1CCCCC1"

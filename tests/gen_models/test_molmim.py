@@ -34,6 +34,48 @@ def test_molmim_property_optimization(molmim_model):
         assert isinstance(smi, str)
 
 @pytest.mark.skipif(not MOLMIM_SERVER_ADDRESS, reason="MOLMIM_SERVER_ADDRESS not set")
+def test_molmim_biased_generation_list_iterate(molmim_model):
+    """Test MolMIM biased generation with a list of seeds (iterate)."""
+    seed_smiles = [
+        "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+        "CC1(C)C(C(=O)O)C1C(C=C(C)C)C"
+    ]
+    task = GenerationTask(
+        mode='biased_generation',
+        seed_smiles=seed_smiles,
+        config={
+            "n_samples": 4,
+            "processing_mode": "iterate"
+        }
+    )
+    result = molmim_model.generate(task)
+    assert isinstance(result, list)
+    assert len(result) > 0
+    for smi in result:
+        assert isinstance(smi, str)
+
+@pytest.mark.skipif(not MOLMIM_SERVER_ADDRESS, reason="MOLMIM_SERVER_ADDRESS not set")
+def test_molmim_biased_generation_list_sample(molmim_model):
+    """Test MolMIM biased generation with a list of seeds (sample)."""
+    seed_smiles = [
+        "CC(C)Cc1ccc(cc1)C(C)C(=O)O",
+        "CC1(C)C(C(=O)O)C1C(C=C(C)C)C"
+    ]
+    task = GenerationTask(
+        mode='biased_generation',
+        seed_smiles=seed_smiles,
+        config={
+            "n_samples": 4,
+            "processing_mode": "sample"
+        }
+    )
+    result = molmim_model.generate(task)
+    assert isinstance(result, list)
+    assert len(result) > 0
+    for smi in result:
+        assert isinstance(smi, str)
+
+@pytest.mark.skipif(not MOLMIM_SERVER_ADDRESS, reason="MOLMIM_SERVER_ADDRESS not set")
 def test_molmim_biased_generation(molmim_model):
     """Test MolMIM biased generation."""
     task = GenerationTask(
