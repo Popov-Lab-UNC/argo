@@ -78,7 +78,7 @@ class GenerationTask:
         'linker_generation',
         'property_optimization'
     ]
-    scaffold: Optional[str] = None
+    scaffold: Optional[Union[str, List[str]]] = None
     fragments: Optional[List[str]] = None
     seed_smiles: Optional[Union[str, List[str]]] = None
     labels: Optional[List[float]] = None
@@ -190,7 +190,29 @@ class SAFEGenerator(BaseGenerator):
         elif task.mode == 'scaffold_decoration':
             if not task.scaffold:
                 raise ValueError("A 'scaffold' must be provided for this task.")
-            return self.scaffold_decoration(task.scaffold, config)
+
+            scaffolds = [task.scaffold] if isinstance(task.scaffold, str) else task.scaffold
+            processing_mode = config.get('processing_mode', 'iterate') # iterate or sample
+            n_samples = config.get('n_samples', 1000)
+            samples_per_scaffold = n_samples // len(scaffolds)
+
+            all_generated = []
+
+            if processing_mode == 'iterate':
+                for scaffold in scaffolds:
+                    logging.info(f"Decorating scaffold: {scaffold} with {samples_per_scaffold} samples")
+                    config['n_samples'] = samples_per_scaffold
+                    all_generated.extend(self.scaffold_decoration(scaffold, config))
+            elif processing_mode == 'sample':
+                import random
+                for _ in range(n_samples):
+                    scaffold = random.choice(scaffolds)
+                    logging.info(f"Decorating scaffold: {scaffold} with 1 sample")
+                    config['n_samples'] = 1
+                    all_generated.extend(self.scaffold_decoration(scaffold, config))
+
+            return all_generated
+
         elif task.mode == 'linker_generation':
             if not task.fragments or len(task.fragments) != 2:
                 raise ValueError("A list of two 'fragments' must be provided for this task.")
@@ -222,7 +244,7 @@ class MolMIMClient(BaseGenerator):
             raise ValueError("Invalid server_address format. Expected 'hostname:port'.")
 
         self.base_url = f"http://{server_address}"
-        print(f"Attempting to connect to MolMIM service at: {self.base_url}")
+        logging.info(f"Attempting to connect to MolMIM service at: {self.base_url}")
 
         # Immediately perform a health check to ensure the server is ready.
         self._health_check()
@@ -241,7 +263,7 @@ class MolMIMClient(BaseGenerator):
 
             # Check the content of the response
             if response.json().get("status") == "ready":
-                print("Connection successful. MolMIM service is ready.")
+                 logging.info("Connection successful. MolMIM service is ready.")
             else:
                 raise ConnectionError(
                     f"Service at {self.base_url} is running but not ready. "
@@ -321,54 +343,76 @@ class MolMIMClient(BaseGenerator):
         return self._call_api(payload, endpoint="/generate")
 
     def generate(self, task: GenerationTask) -> List[str]:
-        if not task.seed_smiles or not isinstance(task.seed_smiles, str):
-            raise ValueError("A single 'seed_smiles' string must be provided for MolMiM.")
+        if not task.seed_smiles:
+            raise ValueError("A 'seed_smiles' string or list must be provided for MolMiM.")
+
+        seed_smiles_list = [task.seed_smiles] if isinstance(task.seed_smiles, str) else task.seed_smiles
 
         objective = task.objective or 'QED'
         config = task.config or {}
         n_samples = config.get('n_samples', 10)
         batch_size = config.get('batch_size', 10)
+        processing_mode = config.get('processing_mode', 'iterate')
 
-        optimize_params = {
-            "seed_smiles": task.seed_smiles,
-            "iterations": config.get('iterations', 10),
-            "min_similarity": config.get('min_similarity', 0.7),
-            "minimize": config.get('minimize', False),
-            "particles": config.get('particles', 30),
-            "property_name": objective,
-            "scaled_radius": config.get('scaled_radius', 1.0)
-        }
+        all_generated = []
 
-        generation_fn = None
-        if task.mode == 'property_optimization':
-            generation_fn = lambda n: self.optimize(algorithm='CMA-ES', n_samples=n, **optimize_params)
-        elif task.mode == 'biased_generation':
-            generation_fn = lambda n: self.optimize(algorithm='none', n_samples=n, **optimize_params)
-        else:
-            raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
+        def run_generation(seed_smi, num_mols):
 
-        valid_smiles = []
-        generated_count = 0
-        while len(valid_smiles) < n_samples:
-            try:
-                smiles_batch = generation_fn(batch_size)
-                if not smiles_batch:
-                    logging.warning("MolMIMClient.generate returned no SMILES. Stopping generation.")
+            optimize_params = {
+                "seed_smiles": seed_smi,
+                "iterations": config.get('iterations', 10),
+                "min_similarity": config.get('min_similarity', 0.7),
+                "minimize": config.get('minimize', False),
+                "particles": config.get('particles', 30),
+                "property_name": objective,
+                "scaled_radius": config.get('scaled_radius', 1.0)
+            }
+
+            generation_fn = None
+            if task.mode == 'property_optimization':
+                generation_fn = lambda n: self.optimize(algorithm='CMA-ES', n_samples=n, **optimize_params)
+            elif task.mode == 'biased_generation':
+                generation_fn = lambda n: self.optimize(algorithm='none', n_samples=n, **optimize_params)
+            else:
+                raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
+
+            valid_smiles = []
+            generated_count = 0
+            while len(valid_smiles) < num_mols:
+                try:
+                    smiles_batch = generation_fn(batch_size)
+                    if not smiles_batch:
+                        logging.warning("MolMIMClient.generate returned no SMILES. Stopping generation.")
+                        break
+                    generated_count += len(smiles_batch)
+
+                    for smi in smiles_batch:
+                        if validate_smiles(smi):
+                            valid_smiles.append(smi)
+                except requests.exceptions.RequestException as e:
+                    logging.error(f"MolMIM API call failed: {e}. Stopping generation.")
                     break
-                generated_count += len(smiles_batch)
 
-                for smi in smiles_batch:
-                    if validate_smiles(smi):
-                        valid_smiles.append(smi)
-            except requests.exceptions.RequestException as e:
-                logging.error(f"MolMIM API call failed: {e}. Stopping generation.")
-                break
+            if generated_count > 0:
+                validity = len(valid_smiles) / generated_count * 100
+                logging.info(f"MolMIMClient: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
 
-        if generated_count > 0:
-            validity = len(valid_smiles) / generated_count * 100
-            logging.info(f"MolMIMClient: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+            return valid_smiles[:num_mols]
 
-        return valid_smiles[:n_samples]
+        if processing_mode == 'iterate':
+            samples_per_seed = n_samples // len(seed_smiles_list)
+            for seed in seed_smiles_list:
+                logging.info(f"Generating from seed: {seed} with {samples_per_seed} samples")
+                all_generated.extend(run_generation(seed, samples_per_seed))
+
+        elif processing_mode == 'sample':
+            import random
+            for _ in range(n_samples):
+                seed = random.choice(seed_smiles_list)
+                logging.info(f"Generating from seed: {seed} with 1 sample")
+                all_generated.extend(run_generation(seed, 1))
+
+        return all_generated
 
 class GEMGenerator(BaseGenerator):
     """
@@ -397,7 +441,7 @@ class GEMGenerator(BaseGenerator):
 
         if task.mode == 'de_novo':
             if self.finetuned:
-                print("GEM is finetuned. De novo generation is biased generation.")
+                logging.info("GEM is finetuned. De novo generation is biased generation.")
         elif task.mode == 'biased_generation':
             if not task.seed_smiles:
                 raise ValueError("'seed_smiles', list of SMILES for biasing, must be provided for this task.")
