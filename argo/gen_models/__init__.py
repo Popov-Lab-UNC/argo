@@ -5,6 +5,7 @@ import requests
 import json
 import pandas as pd
 import logging
+import random
 from abc import ABC, abstractmethod
 from typing import List, Callable, Optional, Dict, Any, Literal, Union
 from dataclasses import dataclass, field
@@ -232,7 +233,6 @@ class SAFEGenerator(BaseGenerator):
                     all_generated.extend(result)
                     total_generated_count += generated_count
             elif processing_mode == 'sample':
-                import random
                 for _ in range(n_samples):
                     scaffold = random.choice(scaffolds)
                     logging.info(f"Decorating scaffold: {scaffold} with 1 sample")
@@ -248,21 +248,51 @@ class SAFEGenerator(BaseGenerator):
             return all_generated
 
         elif task.mode == 'linker_generation':
-            if not task.fragments or len(task.fragments) != 2:
-                raise ValueError("A list of two 'fragments' must be provided for this task.")
+            if not task.fragments or len(task.fragments) < 2:
+                raise ValueError("A list of at least two 'fragments' must be provided for this task.")
+            
             n_samples = config.get('n_samples', 1000)
             batch_size = config.get('batch_size', 100)
             sanitize = config.get('sanitize', True)
+            processing_mode = config.get('processing_mode', 'iterate') # iterate or sample
             # Extract other kwargs for the underlying model
-            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
-            result, generated_count = self.linker_generation(task.fragments[0], task.fragments[1], n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
-            
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize', 'processing_mode']}
+
+            all_generated = []
+            total_generated_count = 0
+
+            if processing_mode == 'iterate':
+                # Generate from each possible pair of fragments
+                fragment_pairs = []
+                for i, frag1 in enumerate(task.fragments):
+                    for j, frag2 in enumerate(task.fragments[i+1:], i+1):
+                        fragment_pairs.append([frag1, frag2])
+                
+                samples_per_pair = n_samples // len(fragment_pairs) if fragment_pairs else n_samples
+                
+                for i, (frag1, frag2) in enumerate(fragment_pairs):
+                    logging.info(f"Generating linker for fragments {i+1}/{len(fragment_pairs)}: {frag1} and {frag2} with {samples_per_pair} samples")
+                    result, generated_count = self.linker_generation(frag1, frag2, n_samples=samples_per_pair, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+                    
+            elif processing_mode == 'sample':
+                # Randomly sample fragment pairs for each generation
+                for _ in range(n_samples):
+                    selected_fragments = random.sample(task.fragments, 2)
+                    logging.info(f"Generating linker for randomly sampled fragments: {selected_fragments[0]} and {selected_fragments[1]} with 1 sample")
+                    result, generated_count = self.linker_generation(selected_fragments[0], selected_fragments[1], n_samples=1, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+            else:
+                raise ValueError(f"Unknown processing_mode: {processing_mode}. Must be 'iterate' or 'sample'")
+
             # Log validity for linker generation
-            if generated_count > 0:
-                validity = len(result) / generated_count * 100
-                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(result)} valid SMILES from {generated_count} generated)")
+            if total_generated_count > 0:
+                validity = len(all_generated) / total_generated_count * 100
+                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(all_generated)} valid SMILES from {total_generated_count} generated)")
             
-            return result
+            return all_generated
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
@@ -348,14 +378,49 @@ class SAFEGenerator(BaseGenerator):
             return all_generated
 
         elif task.mode == 'linker_generation':
-            if not task.fragments or len(task.fragments) != 2:
-                raise ValueError("A list of two 'fragments' must be provided for this task.")
+            if not task.fragments or len(task.fragments) < 2:
+                raise ValueError("A list of at least two 'fragments' must be provided for this task.")
+            
             n_samples = config.get('n_samples', 1000)
             batch_size = config.get('batch_size', 100)
             sanitize = config.get('sanitize', True)
+            processing_mode = config.get('processing_mode', 'iterate') # iterate or sample
             # Extract other kwargs for the underlying model
-            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
-            return self.linker_generation(task.fragments[0], task.fragments[1], n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize', 'processing_mode']}
+
+            all_generated = []
+            total_generated_count = 0
+
+            if processing_mode == 'iterate':
+                # Generate from each possible pair of fragments
+                fragment_pairs = []
+                for i, frag1 in enumerate(task.fragments):
+                    for j, frag2 in enumerate(task.fragments[i+1:], i+1):
+                        fragment_pairs.append([frag1, frag2])
+                
+                samples_per_pair = n_samples // len(fragment_pairs) if fragment_pairs else n_samples
+                
+                for i, (frag1, frag2) in enumerate(fragment_pairs):
+                    result, generated_count = self.linker_generation(frag1, frag2, n_samples=samples_per_pair, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+                    
+            elif processing_mode == 'sample':
+                # Randomly sample fragment pairs for each generation
+                for _ in range(n_samples):
+                    selected_fragments = random.sample(task.fragments, 2)
+                    result, generated_count = self.linker_generation(selected_fragments[0], selected_fragments[1], n_samples=1, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+            else:
+                raise ValueError(f"Unknown processing_mode: {processing_mode}. Must be 'iterate' or 'sample'")
+
+            # Log validity for linker generation
+            if total_generated_count > 0:
+                validity = len(all_generated) / total_generated_count * 100
+                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(all_generated)} valid SMILES from {total_generated_count} generated)")
+            
+            return all_generated
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
@@ -563,7 +628,6 @@ class MolMIMClient(BaseGenerator):
 
         elif processing_mode == 'sample':
             # Randomly sample seeds for each generation
-            import random
             for _ in range(n_samples):
                 seed = random.choice(seed_smiles_list)
                 logging.info(f"Generating from seed: {seed} with 1 sample")
