@@ -126,15 +126,12 @@ class SAFEGenerator(BaseGenerator):
             designer = sf.SAFEDesign.load_default(device=device, verbose=False)
         self.designer = designer
 
-    def de_novo(self, config: dict) -> List[str]:
-        n_samples = config.get('n_samples', 1000)
-        batch_size = config.get('batch_size', 100)
-        sanitize = config.get('sanitize', True)
+    def de_novo(self, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
         valid_generated = []
         
         while len(valid_generated) < n_samples:
             current_batch_size = min(batch_size, n_samples - len(valid_generated))
-            batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
             # Filter valid SMILES
             for smi in batch:
@@ -145,15 +142,12 @@ class SAFEGenerator(BaseGenerator):
             
         return valid_generated[:n_samples]
 
-    def scaffold_decoration(self, scaffold: str, config: dict) -> List[str]:
-        n_samples = config.get('n_samples', 1000)
-        batch_size = config.get('batch_size', 100)
-        sanitize = config.get('sanitize', True)
+    def scaffold_decoration(self, scaffold: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
         valid_generated = []
         
         while len(valid_generated) < n_samples:
             current_batch_size = min(batch_size, n_samples - len(valid_generated))
-            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
             # Filter valid SMILES
             for smi in batch:
@@ -164,15 +158,12 @@ class SAFEGenerator(BaseGenerator):
             
         return valid_generated[:n_samples]
 
-    def linker_generation(self, fragment1: str, fragment2: str, config: dict) -> List[str]:
-        n_samples = config.get('n_samples', 1000)
-        batch_size = config.get('batch_size', 100)
-        sanitize = config.get('sanitize', True)
+    def linker_generation(self, fragment1: str, fragment2: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
         valid_generated = []
         
         while len(valid_generated) < n_samples:
             current_batch_size = min(batch_size, n_samples - len(valid_generated))
-            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **{k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']})
+            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
             # Filter valid SMILES
             for smi in batch:
@@ -186,7 +177,12 @@ class SAFEGenerator(BaseGenerator):
     def generate(self, task: GenerationTask) -> List[str]:
         config = task.config or {}
         if task.mode == 'de_novo':
-            return self.de_novo(config)
+            n_samples = config.get('n_samples', 1000)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
+            return self.de_novo(n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
         elif task.mode == 'scaffold_decoration':
             if not task.scaffold:
                 raise ValueError("A 'scaffold' must be provided for this task.")
@@ -195,28 +191,35 @@ class SAFEGenerator(BaseGenerator):
             processing_mode = config.get('processing_mode', 'iterate') # iterate or sample
             n_samples = config.get('n_samples', 1000)
             samples_per_scaffold = n_samples // len(scaffolds)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize', 'processing_mode']}
 
             all_generated = []
 
             if processing_mode == 'iterate':
                 for scaffold in scaffolds:
                     logging.info(f"Decorating scaffold: {scaffold} with {samples_per_scaffold} samples")
-                    config['n_samples'] = samples_per_scaffold
-                    all_generated.extend(self.scaffold_decoration(scaffold, config))
+                    all_generated.extend(self.scaffold_decoration(scaffold, n_samples=samples_per_scaffold, batch_size=batch_size, sanitize=sanitize, **kwargs))
             elif processing_mode == 'sample':
                 import random
                 for _ in range(n_samples):
                     scaffold = random.choice(scaffolds)
                     logging.info(f"Decorating scaffold: {scaffold} with 1 sample")
-                    config['n_samples'] = 1
-                    all_generated.extend(self.scaffold_decoration(scaffold, config))
+                    all_generated.extend(self.scaffold_decoration(scaffold, n_samples=1, batch_size=batch_size, sanitize=sanitize, **kwargs))
 
             return all_generated
 
         elif task.mode == 'linker_generation':
             if not task.fragments or len(task.fragments) != 2:
                 raise ValueError("A list of two 'fragments' must be provided for this task.")
-            return self.linker_generation(task.fragments[0], task.fragments[1], config)
+            n_samples = config.get('n_samples', 1000)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
+            return self.linker_generation(task.fragments[0], task.fragments[1], n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
         else:
             raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
 
