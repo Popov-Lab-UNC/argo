@@ -6,14 +6,20 @@ Argo is a Python framework designed to facilitate in silico molecular design by 
 
 The goal of Argo is to create an accessible and extensible platform for the design-test-learn cycle in drug discovery. By providing a common interface for different generative models and a standardized way to define generation tasks, Argo aims to accelerate research and development in this area.
 
+## Model Capabilities
+
+Argo provides a unified interface for the following generative models and tasks:
+
+| Model       | De Novo | Biased Generation | Scaffold Decoration | Linker Generation | Property Optimization |
+|-------------|:-------:|:-----------------:|:-------------------:|:-----------------:|:---------------------:|
+| **SAFE-GPT**|    ✅    |         -         |          ✅         |         ✅        |           -           |
+| **GEM**     |    ✅    |         ✅        |          -          |         -         |           -           |
+| **f-RAG**   |    -    |         -         |          ✅         |         ✅        |           ✅          |
+| **MolMIM**  |    -    |         ✅        |          -          |         -         |           ✅          |
+
 ## Example Workflow
 
-Here is a comprehensive example that demonstrates a typical workflow with Argo. This script covers:
-1.  Loading a dataset of molecules.
-2.  Cleaning the SMILES strings.
-3.  Training a simple filter model (e.g., QED).
-4.  Generating new molecules using different models and tasks.
-5.  Filtering the generated molecules using the trained model.
+Here is a comprehensive example demonstrating a typical workflow with Argo.
 
 ```python
 import pandas as pd
@@ -22,32 +28,49 @@ from argo.gen_models import GenerationModel, GenerationTask
 from argo.utils import clean_smiles
 
 # --- 1. Load and Prepare Data ---
-df = pd.DataFrame('example_data.csv')
+# Create a dummy dataframe for demonstration
+data = {'smiles': ['O=C(c1ccccc1)c1ccc(O)cc1', 'c1ccccc1C(=O)c1c(O)cccc1O']}
+df = pd.DataFrame(data)
 
 # --- 2. Clean SMILES ---
 cleaned_smiles = [clean_smiles(smi) for smi in df['smiles']]
 
 # --- 3. Generate Molecules ---
+# Instantiate models
 safegpt = GenerationModel(model_type='safegpt')
 gem = GenerationModel(model_type='gem', model_path='argo/gen_models/pretrained/gem_chembl.pt')
 
 # --- Task 1: De Novo Generation with SAFE-GPT ---
+print("--- Running De Novo Generation with SAFE-GPT ---")
 denovo_task = GenerationTask(
     mode='de_novo',
-    config={"n_samples": 20}
+    config={"n_samples": 10, "batch_size": 5}
 )
 denovo_molecules = safegpt.generate(denovo_task)
+print(f"Generated {len(denovo_molecules)} de novo molecules.")
 
-# --- Task 2: Scaffold Decoration with SAFE-GPT ---
+# --- Task 2: Scaffold Decoration with a list of scaffolds ---
+print("\n--- Running Scaffold Decoration with SAFE-GPT (List Input) ---")
 scaffold_task = GenerationTask(
     mode='scaffold_decoration',
-    scaffold='[*]c1ccccc1[*]',
-    config={"n_samples": 20}
+    scaffold=['[*]c1ccccc1[*]', '[*]c1n[nH]c2c1c(=O)n(C)c(=O)n2C'],
+    config={"n_samples": 10, "strategy": "iterate"} # 'iterate' or 'sample'
 )
 decorated_molecules = safegpt.generate(scaffold_task)
+print(f"Generated {len(decorated_molecules)} decorated molecules.")
+
+# --- Task 3: Biased Generation with GEM ---
+print("\n--- Running Biased Generation with GEM ---")
+biased_task = GenerationTask(
+    mode='biased_generation',
+    seed_smiles=cleaned_smiles,
+    config={"n_samples": 10, "batch_size": 5, "n_epochs": 5}
+)
+biased_molecules = gem.generate(biased_task)
+print(f"Generated {len(biased_molecules)} biased molecules.")
 ```
 
-## Additional Suggestions
+## Future Tasks
 
 Here are some suggestions for future development and extension of the Argo framework:
 
