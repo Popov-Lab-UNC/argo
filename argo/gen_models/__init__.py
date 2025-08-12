@@ -126,53 +126,189 @@ class SAFEGenerator(BaseGenerator):
             designer = sf.SAFEDesign.load_default(device=device, verbose=False)
         self.designer = designer
 
-    def de_novo(self, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
-        valid_generated = []
+    def de_novo(self, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> tuple[List[str], int]:
+        valid_smiles = []
+        generated_count = 0
         
-        while len(valid_generated) < n_samples:
-            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+        while len(valid_smiles) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_smiles))
             batch = self.designer.de_novo_generation(n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
+            if not batch:
+                logging.warning("SAFEGenerator.de_novo returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(batch)
+            
             # Filter valid SMILES
             for smi in batch:
                 if validate_smiles(smi):
-                    valid_generated.append(smi)
-                    if len(valid_generated) >= n_samples:
+                    valid_smiles.append(smi)
+                    if len(valid_smiles) >= n_samples:
                         break
-            
-        return valid_generated[:n_samples]
-
-    def scaffold_decoration(self, scaffold: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
-        valid_generated = []
         
-        while len(valid_generated) < n_samples:
-            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+        return valid_smiles[:n_samples], generated_count
+
+    def scaffold_decoration(self, scaffold: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> tuple[List[str], int]:
+        valid_smiles = []
+        generated_count = 0
+        
+        while len(valid_smiles) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_smiles))
             batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
+            if not batch:
+                logging.warning("SAFEGenerator.scaffold_decoration returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(batch)
+            
             # Filter valid SMILES
             for smi in batch:
                 if validate_smiles(smi):
-                    valid_generated.append(smi)
-                    if len(valid_generated) >= n_samples:
+                    valid_smiles.append(smi)
+                    if len(valid_smiles) >= n_samples:
                         break
-            
-        return valid_generated[:n_samples]
-
-    def linker_generation(self, fragment1: str, fragment2: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> List[str]:
-        valid_generated = []
         
-        while len(valid_generated) < n_samples:
-            current_batch_size = min(batch_size, n_samples - len(valid_generated))
+        return valid_smiles[:n_samples], generated_count
+
+    def linker_generation(self, fragment1: str, fragment2: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> tuple[List[str], int]:
+        valid_smiles = []
+        generated_count = 0
+        
+        while len(valid_smiles) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_smiles))
             batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
             
+            if not batch:
+                logging.warning("SAFEGenerator.linker_generation returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(batch)
+            
             # Filter valid SMILES
             for smi in batch:
                 if validate_smiles(smi):
-                    valid_generated.append(smi)
-                    if len(valid_generated) >= n_samples:
+                    valid_smiles.append(smi)
+                    if len(valid_smiles) >= n_samples:
                         break
+        
+        return valid_smiles[:n_samples], generated_count
+
+    def generate(self, task: GenerationTask) -> List[str]:
+        config = task.config or {}
+        if task.mode == 'de_novo':
+            n_samples = config.get('n_samples', 1000)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
+            result, generated_count = self.de_novo(n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
             
-        return valid_generated[:n_samples]
+            # Log validity
+            if generated_count > 0:
+                validity = len(result) / generated_count * 100
+                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(result)} valid SMILES from {generated_count} generated)")
+            
+            return result
+            
+        elif task.mode == 'scaffold_decoration':
+            if not task.scaffold:
+                raise ValueError("A 'scaffold' must be provided for this task.")
+
+            scaffolds = [task.scaffold] if isinstance(task.scaffold, str) else task.scaffold
+            processing_mode = config.get('processing_mode', 'iterate') # iterate or sample
+            n_samples = config.get('n_samples', 1000)
+            samples_per_scaffold = n_samples // len(scaffolds)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize', 'processing_mode']}
+
+            all_generated = []
+            total_generated_count = 0
+
+            if processing_mode == 'iterate':
+                for scaffold in scaffolds:
+                    logging.info(f"Decorating scaffold: {scaffold} with {samples_per_scaffold} samples")
+                    result, generated_count = self.scaffold_decoration(scaffold, n_samples=samples_per_scaffold, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+            elif processing_mode == 'sample':
+                import random
+                for _ in range(n_samples):
+                    scaffold = random.choice(scaffolds)
+                    logging.info(f"Decorating scaffold: {scaffold} with 1 sample")
+                    result, generated_count = self.scaffold_decoration(scaffold, n_samples=1, batch_size=batch_size, sanitize=sanitize, **kwargs)
+                    all_generated.extend(result)
+                    total_generated_count += generated_count
+
+            # Log validity for scaffold decoration
+            if total_generated_count > 0:
+                validity = len(all_generated) / total_generated_count * 100
+                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(all_generated)} valid SMILES from {total_generated_count} generated)")
+
+            return all_generated
+
+        elif task.mode == 'linker_generation':
+            if not task.fragments or len(task.fragments) != 2:
+                raise ValueError("A list of two 'fragments' must be provided for this task.")
+            n_samples = config.get('n_samples', 1000)
+            batch_size = config.get('batch_size', 100)
+            sanitize = config.get('sanitize', True)
+            # Extract other kwargs for the underlying model
+            kwargs = {k: v for k, v in config.items() if k not in ['n_samples', 'batch_size', 'sanitize']}
+            result, generated_count = self.linker_generation(task.fragments[0], task.fragments[1], n_samples=n_samples, batch_size=batch_size, sanitize=sanitize, **kwargs)
+            
+            # Log validity for linker generation
+            if generated_count > 0:
+                validity = len(result) / generated_count * 100
+                logging.info(f"SAFEGenerator.{task.mode}: validity: {validity:.2f}% ({len(result)} valid SMILES from {generated_count} generated)")
+            
+            return result
+        else:
+            raise NotImplementedError(f"SAFE-GPT does not support the '{task.mode}' generation mode.")
+
+    def scaffold_decoration(self, scaffold: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> tuple[List[str], int]:
+        valid_smiles = []
+        generated_count = 0
+        
+        while len(valid_smiles) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_smiles))
+            batch = self.designer.scaffold_decoration(scaffold=scaffold, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
+            
+            if not batch:
+                logging.warning("SAFEGenerator.scaffold_decoration returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(batch)
+            
+            # Filter valid SMILES
+            for smi in batch:
+                if validate_smiles(smi):
+                    valid_smiles.append(smi)
+                    if len(valid_smiles) >= n_samples:
+                        break
+        
+        return valid_smiles[:n_samples], generated_count
+
+    def linker_generation(self, fragment1: str, fragment2: str, n_samples: int = 1000, batch_size: int = 100, sanitize: bool = True, **kwargs) -> tuple[List[str], int]:
+        valid_smiles = []
+        generated_count = 0
+        
+        while len(valid_smiles) < n_samples:
+            current_batch_size = min(batch_size, n_samples - len(valid_smiles))
+            batch = self.designer.linker_generation(fragment1, fragment2, n_samples_per_trial=current_batch_size, n_trials=1, **kwargs)
+            
+            if not batch:
+                logging.warning("SAFEGenerator.linker_generation returned no SMILES. Stopping generation.")
+                break
+            generated_count += len(batch)
+            
+            # Filter valid SMILES
+            for smi in batch:
+                if validate_smiles(smi):
+                    valid_smiles.append(smi)
+                    if len(valid_smiles) >= n_samples:
+                        break
+        
+        return valid_smiles[:n_samples], generated_count
 
     def generate(self, task: GenerationTask) -> List[str]:
         config = task.config or {}
@@ -346,74 +482,132 @@ class MolMIMClient(BaseGenerator):
         return self._call_api(payload, endpoint="/generate")
 
     def generate(self, task: GenerationTask) -> List[str]:
+        """Generate molecules using MolMiM with support for property optimization and biased generation."""
         if not task.seed_smiles:
             raise ValueError("A 'seed_smiles' string or list must be provided for MolMiM.")
 
-        seed_smiles_list = [task.seed_smiles] if isinstance(task.seed_smiles, str) else task.seed_smiles
-
-        objective = task.objective or 'QED'
+        # Parse configuration
         config = task.config or {}
         n_samples = config.get('n_samples', 10)
         batch_size = config.get('batch_size', 10)
         processing_mode = config.get('processing_mode', 'iterate')
+        objective = task.objective or 'QED'
 
+        # Normalize seed_smiles to list
+        seed_smiles_list = [task.seed_smiles] if isinstance(task.seed_smiles, str) else task.seed_smiles
+
+        # Determine generation algorithm based on task mode
+        if task.mode == 'property_optimization':
+            algorithm = 'CMA-ES'
+        elif task.mode == 'biased_generation':
+            algorithm = 'none'
+        else:
+            raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
+
+        # Build optimization parameters
+        optimize_params = {
+            "iterations": config.get('iterations', 10),
+            "min_similarity": config.get('min_similarity', 0.7),
+            "minimize": config.get('minimize', False),
+            "particles": config.get('particles', 30),
+            "property_name": objective,
+            "scaled_radius": config.get('scaled_radius', 1.0)
+        }
+
+        # Process seeds according to processing mode
         all_generated = []
-
-        def run_generation(seed_smi, num_mols):
-
-            optimize_params = {
-                "seed_smiles": seed_smi,
-                "iterations": config.get('iterations', 10),
-                "min_similarity": config.get('min_similarity', 0.7),
-                "minimize": config.get('minimize', False),
-                "particles": config.get('particles', 30),
-                "property_name": objective,
-                "scaled_radius": config.get('scaled_radius', 1.0)
-            }
-
-            generation_fn = None
-            if task.mode == 'property_optimization':
-                generation_fn = lambda n: self.optimize(algorithm='CMA-ES', n_samples=n, **optimize_params)
-            elif task.mode == 'biased_generation':
-                generation_fn = lambda n: self.optimize(algorithm='none', n_samples=n, **optimize_params)
-            else:
-                raise NotImplementedError(f"MolMiM does not support the '{task.mode}' generation mode.")
-
-            valid_smiles = []
-            generated_count = 0
-            while len(valid_smiles) < num_mols:
-                try:
-                    smiles_batch = generation_fn(batch_size)
-                    if not smiles_batch:
-                        logging.warning("MolMIMClient.generate returned no SMILES. Stopping generation.")
-                        break
-                    generated_count += len(smiles_batch)
-
-                    for smi in smiles_batch:
-                        if validate_smiles(smi):
-                            valid_smiles.append(smi)
-                except requests.exceptions.RequestException as e:
-                    logging.error(f"MolMIM API call failed: {e}. Stopping generation.")
-                    break
-
-            if generated_count > 0:
-                validity = len(valid_smiles) / generated_count * 100
-                logging.info(f"MolMIMClient: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
-
-            return valid_smiles[:num_mols]
-
+        
         if processing_mode == 'iterate':
+            # Generate from each seed sequentially
             samples_per_seed = n_samples // len(seed_smiles_list)
             for seed in seed_smiles_list:
                 logging.info(f"Generating from seed: {seed} with {samples_per_seed} samples")
-                all_generated.extend(run_generation(seed, samples_per_seed))
+                
+                # Generate molecules from this seed
+                valid_smiles = []
+                generated_count = 0
+                
+                while len(valid_smiles) < samples_per_seed:
+                    try:
+                        # Call MolMiM API
+                        smiles_batch = self.optimize(
+                            seed_smiles=seed,
+                            algorithm=algorithm,
+                            n_samples=batch_size,
+                            **optimize_params
+                        )
+                        
+                        if not smiles_batch:
+                            logging.warning(f"MolMiM returned no SMILES for seed: {seed}")
+                            break
+                        
+                        generated_count += len(smiles_batch)
+                        
+                        # Filter valid SMILES
+                        for smi in smiles_batch:
+                            if validate_smiles(smi):
+                                valid_smiles.append(smi)
+                                if len(valid_smiles) >= samples_per_seed:
+                                    break
+                                    
+                    except requests.exceptions.RequestException as e:
+                        logging.error(f"MolMiM API call failed for seed {seed}: {e}")
+                        break
+
+                # Log validity statistics for this seed
+                if generated_count > 0:
+                    validity = len(valid_smiles) / generated_count * 100
+                    logging.info(f"MolMIMClient.{task.mode}: validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+                
+                all_generated.extend(valid_smiles[:samples_per_seed])
 
         elif processing_mode == 'sample':
+            # Randomly sample seeds for each generation
             import random
             for _ in range(n_samples):
                 seed = random.choice(seed_smiles_list)
                 logging.info(f"Generating from seed: {seed} with 1 sample")
-                all_generated.extend(run_generation(seed, 1))
+                
+                # Generate molecules from this seed
+                valid_smiles = []
+                generated_count = 0
+                
+                while len(valid_smiles) < 1:
+                    try:
+                        # Call MolMiM API
+                        smiles_batch = self.optimize(
+                            seed_smiles=seed,
+                            algorithm=algorithm,
+                            n_samples=batch_size,
+                            **optimize_params
+                        )
+                        
+                        if not smiles_batch:
+                            logging.warning(f"MolMiM returned no SMILES for seed: {seed}")
+                            break
+                        
+                        generated_count += len(smiles_batch)
+                        
+                        # Filter valid SMILES
+                        for smi in smiles_batch:
+                            if validate_smiles(smi):
+                                valid_smiles.append(smi)
+                                if len(valid_smiles) >= 1:
+                                    break
+                                    
+                    except requests.exceptions.RequestException as e:
+                        logging.error(f"MolMiM API call failed for seed {seed}: {e}")
+                        break
+
+                # Log validity statistics for this seed
+                if generated_count > 0:
+                    validity = len(valid_smiles) / generated_count * 100
+                    logging.info(f"MolMIMClient.{task.mode}: validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+                
+                all_generated.extend(valid_smiles[:1])
+
+        else:
+            raise ValueError(f"Unknown processing_mode: {processing_mode}. Must be 'iterate' or 'sample'")
 
         return all_generated
 
@@ -470,7 +664,7 @@ class GEMGenerator(BaseGenerator):
 
         if generated_count > 0:
             validity = len(valid_smiles) / generated_count * 100
-            logging.info(f"GEMGenerator: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+            logging.info(f"GEMGenerator.{task.mode}: validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
 
         return valid_smiles[:n_samples]
 
@@ -541,7 +735,7 @@ class F_RAGGenerator(BaseGenerator):
 
         if generated_count > 0:
             validity = len(valid_smiles) / generated_count * 100
-            logging.info(f"F_RAGGenerator: Final validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
+            logging.info(f"F_RAGGenerator.{task.mode}: validity: {validity:.2f}% ({len(valid_smiles)} valid SMILES from {generated_count} generated)")
 
         return valid_smiles[:n_samples]
 
