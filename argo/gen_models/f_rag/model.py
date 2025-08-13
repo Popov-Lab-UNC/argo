@@ -382,6 +382,9 @@ class f_RAG:
             ]
             optimized_molecules.extend(new_mols)
             seen_smiles.update(smiles for _, smiles in new_mols)
+
+            # Report Progress
+            self._print_iteration_stats(i, self.mol_population, threshold, optimized_molecules, sampler_weights)
             
             # Update the revolving gene pool
             self.update_population(scores, smiles_list, higher_is_better)
@@ -398,10 +401,7 @@ class f_RAG:
                 ga_active = True
                 print("--- Genetic Algorithm Activated ---")
                 if sampler_weights['ga'] == 0.0:
-                    sampler_weights['ga'] = 0.2 
-            
-            # 7. Report Progress
-            self._print_iteration_stats(i, self.mol_population, threshold, optimized_molecules, sampler_weights)
+                    sampler_weights['ga'] = 0.2
 
         else: # This 'else' belongs to the 'for' loop, executes if loop finishes without `break`
             print(f"\nMax iterations ({max_iter}) reached. Collected {len(optimized_molecules)} out of {n_samples} desired molecules.")
