@@ -19,9 +19,17 @@ def clean_smiles(smiles_list):
         if cleaned_smiles:
             mol = Chem.MolFromSmiles(cleaned_smiles)
             if mol is not None:
+                # Try to strip salts
                 desalted = remover.StripMol(mol)
                 if desalted is not None:
                     smiles_main = Chem.MolToSmiles(desalted)
+                    # TODO: This is a hack to remove salts. We should use a more robust method.
+                    # Additional manual salt removal for common cases
+                    if '[Na]' in smiles_main:
+                        # Remove [Na] and any associated charges
+                        smiles_main = smiles_main.replace('[Na]', '')
+                        # Remove any remaining charges that might be left
+                        smiles_main = smiles_main.replace('[O-]', 'O').replace('[O+]', 'O')
                     cleaned.append(smiles_main)
     return cleaned
 

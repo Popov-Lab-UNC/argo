@@ -221,7 +221,12 @@ class SmilesDataset(Dataset):
         valid_smiles = []
         for smi in smiles:
             if Chem.MolFromSmiles(smi) is not None:
-                valid_smiles.append(smi)
+                # Check if all characters are in the GEM vocabulary (case-sensitive)
+                if all(c in utils.TOKENS for c in smi):
+                    valid_smiles.append(smi)
+                else:
+                    missing_chars = set(smi) - set(utils.TOKENS)
+                    logging.warning(f"SMILES excluded due to unsupported characters {missing_chars}: {smi}")
             else:
                 logging.warning(f"Invalid SMILES excluded: {smi}")
         self.smiles = valid_smiles
