@@ -1,23 +1,53 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "argo"
-version = "0.1"
-description = "A generative modeling package."
+version = "0.1.0"
+description = "A framework for in silico molecular design with unified interface to generative models"
 authors = [
     { name = "Shu-Hang Lin", email = "shuhang@unc.edu" }
 ]
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+keywords = ["molecular-design", "drug-discovery", "generative-models", "chemistry", "machine-learning"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
-# Optional: Add dependencies here
-# dependencies = [
-#     "numpy>=1.21",
-#     "scipy>=1.7"
-# ]
+dependencies = [
+    "safe-mol>=0.1.13",
+    "pytest>=7.0.0",
+    "rdkit>=2025.3.5",
+    "numpy>=1.21.0",
+    "transformers==4.38.2",
+]
+
+[project.optional-dependencies]
+scoring = [
+    "chemprop>=2.2.0"
+]
+viz = [
+    "seaborn>=0.13.2"
+]
+
+[project.urls]
+Homepage = "https://github.com/shuhang/argo"
+Repository = "https://github.com/shuhang/argo.git"
+"Bug Tracker" = "https://github.com/shuhang/argo/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["argo"]
+include = ["argo*"]
+
+[tool.setuptools.package-data]
+"argo" = ["*.json", "*.yaml", "*.yml", "*.txt"]

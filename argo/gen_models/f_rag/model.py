@@ -20,7 +20,7 @@ from rdkit import Chem
 from rdkit.Chem import AllChem
 from typing import Optional
 
-from tdc import Oracle
+from argo.property_oracles import Oracle
 
 from argo.gen_models.f_rag.fusion.sample import SAFEFusionDesign
 #from argo.gen_models.f_rag.fusion.slicer import MolSlicer

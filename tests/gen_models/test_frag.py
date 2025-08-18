@@ -58,7 +58,6 @@ def test_f_rag_linker_generation(frag_model):
 
 def test_f_rag_property_optimization(frag_model):
     """Test f-RAG property optimization mode."""
-    pytest.importorskip("tdc")
     pytest.importorskip("numpy")
 
     task = GenerationTask(
