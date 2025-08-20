@@ -288,3 +288,56 @@ class MolSlicerForSAFEEncoder(MolSlicer):
         
         for bond in selected_bonds:
             yield (bond.GetBeginAtomIdx(), bond.GetEndAtomIdx())
+
+def get_rotatable_bonds(mol, strict=True):
+    """
+    Identifies rotatable bonds in a molecule based on RDKit's strict 
+    and non-strict SMARTS patterns.
+
+    Returns:
+        A tuple containing two lists of tuples: (strict_bonds, non_strict_bonds)
+    """
+
+    if strict:
+        # SMARTS pattern for strict rotatable bonds (Lipinski definition)
+        # This excludes amides, esters, and bonds to certain groups.
+        strict_smarts = '[!$(*#*)&!D1&!$(C(F)(F)F)&!$(C(Cl)(Cl)Cl)&!$(C(Br)(Br)Br)&!$(C([CH3])([CH3])[CH3])&!$([CD3](=[N,O,S])-!@[#7,O,S!D1])&!$([#7,O,S!D1]-!@[CD3]=[N,O,S])&!$([CD3](=[N+])-!@[#7!D1])&!$([#7!D1]-!@[CD3]=[N+])]-&!@[!$(*#*)&!D1&!$(C(F)(F)F)&!$(C(Cl)(Cl)Cl)&!$(C(Br)(Br)Br)&!$(C([CH3])([CH3])[CH3])]'
+        strict_query = Chem.MolFromSmarts(strict_smarts)
+        strict_bonds = mol.GetSubstructMatches(strict_query)
+        return strict_bonds
+    else:
+        # SMARTS pattern for non-strict rotatable bonds
+        # This is a broader definition.
+        non_strict_smarts = '[!$(*#*)&!D1]-&!@[!$(*#*)&!D1]'
+        non_strict_query = Chem.MolFromSmarts(non_strict_smarts)
+        non_strict_bonds = mol.GetSubstructMatches(non_strict_query)
+        return non_strict_bonds
+    
+def find_connected_rotatable_bond_ends(mol):
+    """Find the ends of connected sequences of rotatable bonds.
+    
+    Args:
+        mol: RDKit molecule object
+        rotatable_bonds: List of tuples containing atom indices of rotatable bonds
+        
+    Returns:
+        List of tuples containing atom indices of the ends of connected rotatable bond sequences
+    """
+    # Count occurrences of each atom in rotatable bonds
+    rotatable_bonds = get_rotatable_bonds(mol, strict=False)
+
+    atom_counts = {}
+    for bond in rotatable_bonds:
+        for atom in bond:
+            atom_counts[atom] = atom_counts.get(atom, 0) + 1
+            
+    # Find atoms that appear only once - these are the ends
+    end_atoms = [atom for atom, count in atom_counts.items() if count == 1]
+    
+    # Find bonds that contain these end atoms
+    end_bonds = []
+    for bond in rotatable_bonds:
+        if bond[0] in end_atoms or bond[1] in end_atoms:
+            end_bonds.append(bond)
+
+    return end_bonds
