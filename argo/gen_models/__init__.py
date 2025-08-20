@@ -299,12 +299,13 @@ class MolMIMClient(BaseGenerator):
         headers = {"Accept": "application/json", "Content-Type": "application/json"}
         session = requests.Session()
         response = session.post(url, headers=headers, json=payload)
-        response.raise_for_status()
-
+        # Include server response body in errors for easier debugging
         if response.status_code != 200:
-            raise requests.HTTPError(
-                f"MolMIM API Error: {response.status_code} {response.text}"
-            )
+            try:
+                error_body = response.text
+            except Exception:
+                error_body = "<no response body>"
+            raise requests.HTTPError(f"MolMIM API Error: {response.status_code} {error_body}")
 
         response_body = response.json()
 
@@ -340,10 +341,13 @@ class MolMIMClient(BaseGenerator):
             raise ValueError("min_similarity must be between 0.0 and 0.7")
         if n_samples < 1 or n_samples > 1000:
             raise ValueError("n_samples must be between 1 and 1000")
-        if particles < 2 or particles > 3000:
-            raise ValueError("particles must be between 2 and 3000")
         if scaled_radius < 0.0 or scaled_radius > 2.0:
             raise ValueError("scaled_radius must be between 0.0 and 2.0")
+        if particles < 2 or particles > 3000:
+            raise ValueError("particles must be between 2 and 3000")
+        
+        if particles < n_samples:
+            particles = n_samples
 
         payload = {
                    "smi": seed_smiles,

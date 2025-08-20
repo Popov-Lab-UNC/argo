@@ -341,7 +341,7 @@ class f_RAG:
         # 1. Initialization
         assert oracle_name.lower() in ['qed', 'sa', 'logp'], f"Oracle name must be one of ['QED', 'SA', 'LogP'], got {oracle_name}"
         
-        tdc_oracle = Oracle(name=oracle_name)
+        oracle = Oracle(name=oracle_name)
         print(f'Optimizing with {oracle_name} to collect {n_samples} molecules with score > {threshold}...')
 
         self._reset_fragment_scores()
@@ -371,7 +371,7 @@ class f_RAG:
                 continue
 
             smiles_list = [smiles for smiles, _ in new_mols_with_source]
-            scores = tdc_oracle(smiles_list)
+            scores = oracle(smiles_list)
             
             # 5. Process the new batch: Collect good molecules and update the pool
             # Collect new, valid molecules in a batch
