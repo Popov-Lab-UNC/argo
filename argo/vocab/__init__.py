@@ -313,6 +313,12 @@ class FragmentVocabulary:
         self.max_fragments = max_fragments
         self.lower_is_better = lower_is_better
 
+        # Check if data is empty (for initialization with empty DataFrame)
+        if isinstance(self.data, pd.DataFrame) and self.data.empty:
+            # Initialize with empty vocabulary
+            self._vocab_df = pd.DataFrame(columns=['frag', 'count', 'score', 'size', 'type', 'attachment_count'])
+            return self._vocab_df
+        
         # Load and validate data
         df = self._load_and_validate_data(self.data)
         # Fragment molecules and update stats
@@ -345,6 +351,11 @@ class FragmentVocabulary:
             df = pd.read_csv(data)
         else:
             df = data.copy()
+        
+        # Handle empty DataFrame case
+        if df.empty:
+            return df
+            
         required_cols = {self.smiles_col, self.score_col}
         if not required_cols.issubset(df.columns):
             raise ValueError(f"Data must contain columns: {required_cols}. Found: {set(df.columns)}")
@@ -356,6 +367,10 @@ class FragmentVocabulary:
         """
         Fragment molecules and update the internal fragment statistics.
         """
+        # Handle empty DataFrame case
+        if df.empty:
+            return
+            
         frag_stats = self._fragment_molecules(df, use_tqdm=use_tqdm)
         
         # Update fragment objects with new data
