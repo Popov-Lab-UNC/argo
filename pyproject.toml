@@ -37,7 +37,9 @@ scoring = [
     "chemprop>=2.2.0"
 ]
 viz = [
-    "seaborn>=0.13.2"
+    "seaborn>=0.13.2",
+    "plotly>=6.3.0",
+    "nbformat>=4.2.0"
 ]
 
 [project.urls]
