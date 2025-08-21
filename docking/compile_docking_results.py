@@ -9,6 +9,9 @@ import tempfile
 import gzip  # Import the gzip library
 import argparse
 
+# Determine cores from SLURM or default to 1
+num_cores = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
+
 def process_dlg_file(root_dir, filepath) -> list:
     """
     Processes a single .dlg or .dlg.gz file to extract data for the best pose in each cluster.
@@ -73,6 +76,10 @@ def process_dlg_file(root_dir, filepath) -> list:
             
     return results
 
+# Use multiprocessing Pool to process files in parallel
+def _star(args):
+    return process_dlg_file(*args)
+
 def main():
     """Main function to find files, run parallel processing, and save the CSV."""
     parser = argparse.ArgumentParser(description="Compile docking results from one or more directories.")
@@ -115,14 +122,7 @@ def main():
         print("Error: No .dlg or .dlg.gz files found in the provided root directories.")
         return
 
-    print(f"Found {len(file_root_pairs):,} files across {len(root_dirs)} root(s). Starting parallel processing on {NUM_CORES} cores...")
-
-    # Determine cores from SLURM or default to 1
-    num_cores = int(os.environ.get("SLURM_CPUS_PER_TASK", 1))
-
-    # Use multiprocessing Pool to process files in parallel
-    def _star(args):
-        return process_dlg_file(*args)
+    print(f"Found {len(file_root_pairs):,} files across {len(root_dirs)} root(s). Starting parallel processing on {num_cores} cores...")
 
     with Pool(num_cores) as pool:
         all_results = list(tqdm(pool.imap_unordered(_star, file_root_pairs), total=len(file_root_pairs)))
