@@ -452,6 +452,11 @@ class FragmentVocabulary:
             out_rows.append(fragment.to_dict())
         
         vocab_df = pd.DataFrame(out_rows)
+        
+        # Handle empty DataFrame case
+        if vocab_df.empty:
+            return vocab_df
+            
         # Sort by score (ascending if lower_is_better, descending otherwise)
         vocab_df = vocab_df.sort_values('score', ascending=self.lower_is_better)
         if self.max_fragments is not None:
@@ -501,6 +506,11 @@ class FragmentVocabulary:
             out_rows.append(frag_dict)
         
         vocab_df = pd.DataFrame(out_rows)
+        
+        # Handle empty DataFrame case
+        if vocab_df.empty:
+            return vocab_df
+            
         # Sort by enrichment score (higher is better, so descending)
         vocab_df = vocab_df.sort_values('score', ascending=False)
         if self.max_fragments is not None:

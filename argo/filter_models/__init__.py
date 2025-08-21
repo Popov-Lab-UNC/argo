@@ -4,6 +4,7 @@ from typing import List, Optional
 import numpy as np
 from joblib import dump, load
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics.pairwise import cosine_distances
 from rdkit import Chem
 import torch
 
@@ -77,27 +78,26 @@ class ChemeleonFilterModel:
     Molecules are scored based on their similarity to the positive control set.
     """
     
-    def __init__(self, positive_controls: list[str]):
+    def __init__(self, positive_controls: list[str], batch_size: int = 128):
         """
         Initialize the Chemeleon filter model.
         
         Args:
             positive_controls: List of SMILES strings representing positive control molecules
-            similarity_threshold: Minimum similarity score to pass the filter (0.0 to 1.0)
-            device: Device to run the model on ('cpu', 'cuda', etc.)
+            batch_size: Number of molecules to process at once (to avoid memory issues)
         """
         try:
             from chemprop import featurizers, nn
             from chemprop.data import BatchMolGraph
             from chemprop.nn import RegressionFFN
             from chemprop.models import MPNN
-            from sklearn.metrics.pairwise import cosine_distances
             from pathlib import Path
             from urllib.request import urlretrieve
         except ImportError:
             raise ImportError("ChemeleonFilterModel requires chemprop>=2.2.0. Install with: pip install 'chemprop>=2.2.0'")
         
         self.positive_controls = positive_controls
+        self.batch_size = batch_size
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         
         # Initialize CheMeleon fingerprint model
@@ -131,7 +131,7 @@ class ChemeleonFilterModel:
         self.positive_fingerprints = self._generate_fingerprints(positive_controls)
         
     def _generate_fingerprints(self, smiles_list: list[str]) -> np.ndarray:
-        """Generate CheMeleon fingerprints for a list of SMILES strings."""
+        """Generate CheMeleon fingerprints for a list of SMILES strings in batches."""
         try:
             mols = [Chem.MolFromSmiles(smiles) for smiles in smiles_list]
             mols = [mol for mol in mols if mol is not None]  # Filter out None values
@@ -139,11 +139,32 @@ class ChemeleonFilterModel:
             if not mols:
                 return np.array([])
             
-            bmg = BatchMolGraph([self.featurizer(mol) for mol in mols])
-            bmg.to(device=self.model.device)
-            fingerprints = self.model.fingerprint(bmg).numpy(force=True)
+            all_fingerprints = []
             
-            return fingerprints
+            # Process in batches to avoid memory issues
+            for i in range(0, len(mols), self.batch_size):
+                batch_mols = mols[i:i + self.batch_size]
+                
+                try:
+                    bmg = BatchMolGraph([self.featurizer(mol) for mol in batch_mols])
+                    bmg.to(device=self.model.device)
+                    batch_fingerprints = self.model.fingerprint(bmg).numpy(force=True)
+                    all_fingerprints.append(batch_fingerprints)
+                    
+                    # Clear GPU memory after each batch
+                    if self.device == 'cuda':
+                        torch.cuda.empty_cache()
+                        
+                except Exception as e:
+                    print(f"Error processing batch {i//self.batch_size + 1}: {e}")
+                    # Continue with next batch instead of failing completely
+                    continue
+            
+            if not all_fingerprints:
+                return np.array([])
+                
+            return np.vstack(all_fingerprints)
+            
         except Exception as e:
             print(f"Error generating fingerprints: {e}")
             return np.array([])
@@ -156,7 +177,7 @@ class ChemeleonFilterModel:
             smiles_list: List of SMILES strings to filter
             distance_threshold: Maximum distance threshold
                               Distance = 1 - similarity, so 0.0 = identical, 1.0 = completely different
-            unique_only: If True, return only unique SMILES (keep best score for duplicates)
+            no_identical: If True, exclude molecules identical to positive controls
             
         Returns:
             List of tuples (smiles, score) where score is the minimum distance to positive controls
