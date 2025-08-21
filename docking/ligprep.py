@@ -81,8 +81,8 @@ if __name__ == "__main__":
    scrub = Scrub(ph_low=7.4, ph_high=7.4, skip_tautomers=True)  # Setup scrub instance with pH constraints
 
    # Manual input and output paths
-   input_file = "PptT/class1_compounds.smi"
-   output_dir = "/work/users/s/h/shuhang/argo_docking/PptT_bm/class1_compounds"
+   input_file = "PptT/argo_18aug2025.smi"
+   output_dir = "/work/users/s/h/shuhang/argo_docking/PptT/argo_18aug2025"
    
    # Create output directory
    os.makedirs(output_dir, exist_ok=True)
@@ -96,28 +96,31 @@ if __name__ == "__main__":
       for line_num, line in enumerate(f, 1):
          if len(line.split()) >= 2:
             ligand_smi, ligand_name = line.split()[0], line.split()[-1]
+         elif len(line.split()) == 1:
+            ligand_smi = line.split()[0]
+            ligand_name = 'ligand_' + str(line_num)
             
-            # Check for multi-fragment SMILES
-            mol = Chem.MolFromSmiles(ligand_smi)
-            if mol is not None:
-               num_fragments = len(Chem.GetMolFrags(mol))
-               if num_fragments > 1:
-                  multi_fragment_count += 1
-                  
-                  # Get the largest fragment
-                  fragments = Chem.GetMolFrags(mol, asMols=True)
-                  largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
-                  cleaned_smiles = Chem.MolToSmiles(largest_fragment)
-                  
-                  # Record original and cleaned SMILES
-                  with open(multi_fragment_file, "a") as mf:
-                     mf.write(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
-                  
-                  # Use the cleaned SMILES for processing
-                  ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
-               else:
-                  # Single fragment, use as is
-                  ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
+         # Check for multi-fragment SMILES
+         mol = Chem.MolFromSmiles(ligand_smi)
+         if mol is not None:
+            num_fragments = len(Chem.GetMolFrags(mol))
+            if num_fragments > 1:
+               multi_fragment_count += 1
+               
+               # Get the largest fragment
+               fragments = Chem.GetMolFrags(mol, asMols=True)
+               largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
+               cleaned_smiles = Chem.MolToSmiles(largest_fragment)
+               
+               # Record original and cleaned SMILES
+               with open(multi_fragment_file, "a") as mf:
+                  mf.write(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
+               
+               # Use the cleaned SMILES for processing
+               ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
+            else:
+               # Single fragment, use as is
+               ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
 
    print(f"Found {len(ligand_list)} ligands from {input_file}")
    print(f"Cleaned {multi_fragment_count} multi-fragment SMILES (saved to {multi_fragment_file})")
