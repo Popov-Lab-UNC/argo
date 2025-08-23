@@ -133,4 +133,27 @@ def run_generation_task(model, task, task_name: str) -> Dict[str, Any]:
             'duration': duration,
             'success': False,
             'error': str(e)
-        } 
+        }
+
+def normalize_scores(scores: np.ndarray, lower_is_better: bool) -> np.ndarray:
+    """
+    Performs min-max scaling to a 0-1 range.
+    Handles the lower_is_better flag correctly, so a normalized score of 1.0
+    always represents the "best" molecule.
+    """
+    scores = np.asarray(scores)
+    if len(scores) == 0:
+        return np.array([])
+    if len(scores) == 1 or np.all(scores == scores[0]):
+        return np.ones_like(scores)
+
+    min_score, max_score = np.min(scores), np.max(scores)
+
+    if lower_is_better:
+        # Lower scores are better, so they should be mapped to a higher normalized score
+        normalized = (max_score - scores) / (max_score - min_score)
+    else:
+        # Higher scores are better
+        normalized = (scores - min_score) / (max_score - min_score)
+
+    return normalized
