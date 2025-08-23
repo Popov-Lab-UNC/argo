@@ -13,6 +13,6 @@ source $HOME/miniconda3/etc/profile.d/conda.sh
 conda activate docking
 
 # Run the ligand preparation script
-python ligprep.py --n_processes 64
+python ligprep.py --n_processes 64 --input-file PptT/ligands/HGD-2825_UNC11995_HGD_analogue_ideas_20250820.csv --output-dir /work/users/s/h/shuhang/argo_docking/PptT/HGD_analogue_20aug2025 --compound-id-col Designation --smiles-col SMILES
 
 echo "Ligand preparation completed!"

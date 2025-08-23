@@ -49,7 +49,16 @@ def get_poses_from_dlg(filepath: str, pose_indices: Union[int, List[int]]):
         # Select only the specified conformers
         selected_mol = Chem.Mol(combined_mol)
         selected_mol.RemoveAllConformers()
+
+        # Adjust indices to account for removed failed conformers
+        adjusted_indices = []
         for idx in pose_indices:
+            if idx not in failures:
+                adjusted_idx = idx - sum(1 for x in failures if x < idx)
+                if adjusted_idx < combined_mol.GetNumConformers():
+                    adjusted_indices.append(adjusted_idx)
+
+        for idx in adjusted_indices:
             conf = combined_mol.GetConformer(idx)
             selected_mol.AddConformer(conf, assignId=True)
 

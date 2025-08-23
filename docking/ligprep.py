@@ -7,6 +7,7 @@ from multiprocessing import Pool
 from time import sleep
 import os
 import argparse
+import pandas as pd
 
 def process_ligand(args):
    """
@@ -71,6 +72,16 @@ if __name__ == "__main__":
    parser = argparse.ArgumentParser(description='Process ligands for docking preparation')
    parser.add_argument('--n_processes', type=int, default=min(multiprocessing.cpu_count(), 8),
                       help='Number of processes to use (default: min(CPU_count, 8))')
+   parser.add_argument('--input-file', type=str, required=True,
+                      help='Input file path (.smi or .csv)')
+   parser.add_argument('--output-dir', type=str, required=True,
+                      help='Output directory for PDBQT files')
+   parser.add_argument('--compound-id-col', type=str, default='compound_id',
+                      help='Column name for compound ID in CSV (default: compound_id)')
+   parser.add_argument('--smiles-col', type=str, default='smiles',
+                      help='Column name for SMILES in CSV (default: smiles)')
+   parser.add_argument('--verbose', type=bool, default=False,
+                      help='Verbose output (default: False)')
    args = parser.parse_args()
 
    # Multiprocessing options
@@ -80,9 +91,9 @@ if __name__ == "__main__":
    max_attempts = 5  # Maximum attempts for scrubbing each ligand
    scrub = Scrub(ph_low=7.4, ph_high=7.4, skip_tautomers=True)  # Setup scrub instance with pH constraints
 
-   # Manual input and output paths
-   input_file = "PptT/argo_18aug2025.smi"
-   output_dir = "/work/users/s/h/shuhang/argo_docking/PptT/argo_18aug2025"
+   # Input and output paths from arguments
+   input_file = args.input_file
+   output_dir = args.output_dir
    
    # Create output directory
    os.makedirs(output_dir, exist_ok=True)
@@ -90,40 +101,87 @@ if __name__ == "__main__":
    # Read ligands from input file and clean multi-fragment SMILES
    ligand_list = []
    multi_fragment_count = 0
-   multi_fragment_file = "multi_fragment_smiles.txt"
    
-   with open(input_file, "r") as f:
-      for line_num, line in enumerate(f, 1):
-         if len(line.split()) >= 2:
-            ligand_smi, ligand_name = line.split()[0], line.split()[-1]
-         elif len(line.split()) == 1:
-            ligand_smi = line.split()[0]
-            ligand_name = 'ligand_' + str(line_num)
+   # Determine file type and read accordingly
+   file_extension = os.path.splitext(input_file)[1].lower()
+   
+   if file_extension == '.csv':
+      # Read CSV file
+      try:
+         df = pd.read_csv(input_file)
+         if args.compound_id_col not in df.columns:
+            raise ValueError(f"Column '{args.compound_id_col}' not found in CSV. Available columns: {list(df.columns)}")
+         if args.smiles_col not in df.columns:
+            raise ValueError(f"Column '{args.smiles_col}' not found in CSV. Available columns: {list(df.columns)}")
+         
+         for idx, row in df.iterrows():
+            ligand_smi = str(row[args.smiles_col]).strip()
+            ligand_name = str(row[args.compound_id_col]).strip()
             
-         # Check for multi-fragment SMILES
-         mol = Chem.MolFromSmiles(ligand_smi)
-         if mol is not None:
-            num_fragments = len(Chem.GetMolFrags(mol))
-            if num_fragments > 1:
-               multi_fragment_count += 1
-               
-               # Get the largest fragment
-               fragments = Chem.GetMolFrags(mol, asMols=True)
-               largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
-               cleaned_smiles = Chem.MolToSmiles(largest_fragment)
-               
-               # Record original and cleaned SMILES
-               with open(multi_fragment_file, "a") as mf:
-                  mf.write(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
-               
-               # Use the cleaned SMILES for processing
-               ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
+            # Check for multi-fragment SMILES
+            mol = Chem.MolFromSmiles(ligand_smi)
+            if mol is not None:
+               num_fragments = len(Chem.GetMolFrags(mol))
+               if num_fragments > 1:
+                  multi_fragment_count += 1
+                  
+                  # Get the largest fragment
+                  fragments = Chem.GetMolFrags(mol, asMols=True)
+                  largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
+                  cleaned_smiles = Chem.MolToSmiles(largest_fragment)
+                  
+                  # Record original and cleaned SMILES
+                  if args.verbose:
+                     print(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
+                  
+                  # Use the cleaned SMILES for processing
+                  ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
+               else:
+                  # Single fragment, use as is
+                  ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
             else:
-               # Single fragment, use as is
-               ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
+               print(f"[CSV] Failed to parse SMILES: {ligand_smi} for compound {ligand_name}")
+               
+      except Exception as e:
+         print(f"Error reading CSV file: {e}")
+         exit(1)
+         
+   elif file_extension == '.smi':
+      # Read SMILES file (original logic)
+      with open(input_file, "r") as f:
+         for line_num, line in enumerate(f, 1):
+            if len(line.split()) >= 2:
+               ligand_smi, ligand_name = line.split()[0], line.split()[-1]
+            elif len(line.split()) == 1:
+               ligand_smi = line.split()[0]
+               ligand_name = 'ligand_' + str(line_num)
+               
+            # Check for multi-fragment SMILES
+            mol = Chem.MolFromSmiles(ligand_smi)
+            if mol is not None:
+               num_fragments = len(Chem.GetMolFrags(mol))
+               if num_fragments > 1:
+                  multi_fragment_count += 1
+                  
+                  # Get the largest fragment
+                  fragments = Chem.GetMolFrags(mol, asMols=True)
+                  largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
+                  cleaned_smiles = Chem.MolToSmiles(largest_fragment)
+                  
+                  # Record original and cleaned SMILES
+                  if args.verbose:
+                     print(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
+                  
+                  # Use the cleaned SMILES for processing
+                  ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
+               else:
+                  # Single fragment, use as is
+                  ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
+   else:
+      print(f"Unsupported file format: {file_extension}. Please use .smi or .csv files.")
+      exit(1)
 
    print(f"Found {len(ligand_list)} ligands from {input_file}")
-   print(f"Cleaned {multi_fragment_count} multi-fragment SMILES (saved to {multi_fragment_file})")
    print(f"Processing all {len(ligand_list)} ligands with {n_processes} processes")
 
    # Process ligands
