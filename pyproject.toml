@@ -30,6 +30,7 @@ dependencies = [
     "rdkit>=2025.3.5",
     "numpy>=1.21.0",
     "transformers==4.38.2",
+    "prolif==2.0.3"
 ]
 
 [project.optional-dependencies]
