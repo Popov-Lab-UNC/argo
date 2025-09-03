@@ -20,11 +20,11 @@ print("="*60)
 print("1. Loading and preparing initial data...")
 print("="*60)
 df = pd.read_csv('../benchmark/class1_compounds.csv')
-actives_df = df[(df['ic50'] < 10) & (df['Compound Class'] == 'HGD')].copy()
+actives_df = df[df['Compound Class'] == 'HGD'].copy()
 hdg_smiles = clean_smiles(actives_df['SMILES'].tolist())
 
 print(f"Loaded {len(df)} total compounds.")
-print(f"Found {len(actives_df)} active compounds (IC50 < 10 uM).")
+print(f"Found {len(actives_df)} HGD compounds.")
 
 # --- 2. Vocabulary for f-RAG Model ---
 print("\n" + "="*60)
@@ -65,7 +65,7 @@ print("4. Instantiating all generative models...")
 print("="*60)
 use_cuda = torch.cuda.is_available()
 safegpt_model = GenerationModel('safegpt', use_cuda=use_cuda)
-molmim_model = GenerationModel('molmim', server_address="g0313:8000") # change
+molmim_model = GenerationModel('molmim', server_address="dgx01:8000") # change
 gem_model = GenerationModel('gem', model_path='/nas/longleaf/home/shuhang/argo/argo/gen_models/pretrained/gem_chembl.pt', use_cuda=use_cuda)
 f_rag_model = GenerationModel('f-rag', 
                               vocab=frag_vocab_for_frag.get_vocab(),
@@ -121,15 +121,27 @@ while len(mol_population) < collect_n:
 
     # 7. Generate All Tasks
     all_results = []
+    generated_with_source = []  # list of tuples (smiles, task_name, model_id)
     for task_name, model, task in tasks:
         result = run_generation_task(model, task, task_name)
         all_results.append(result)
+        # Capture provenance for each generated SMILES
+        if result.get('success') and isinstance(result.get('results'), (list, tuple)):
+            model_id = getattr(model, 'model_name', getattr(model, 'name', type(model).__name__))
+            for smi in result['results']:
+                generated_with_source.append((smi, task_name, model_id))
 
     # 8. Drop Duplicate SMILES
     generated_smiles = []
-    for result in all_results:
-        if result['success']:
-            generated_smiles.extend(result['results'])
+    # Map SMILES -> list of (task_name, model_id) to keep all sources
+    smile_to_sources = {}
+    for smi, task_name, model_id in generated_with_source:
+        generated_smiles.append(smi)
+        if smi not in smile_to_sources:
+            smile_to_sources[smi] = []
+        # Append if not already recorded to avoid duplicates
+        if (task_name, model_id) not in smile_to_sources[smi]:
+            smile_to_sources[smi].append((task_name, model_id))
     
     initial_count = len(generated_smiles)
     unique_generated_smiles = list(set(generated_smiles))
@@ -140,16 +152,31 @@ while len(mol_population) < collect_n:
     filtered_smiles_scores = chemeleon_filter.filter(unique_generated_smiles)
     print(f"Filtered {unique_count} unique molecules, {len(filtered_smiles_scores)} passed Chemeleon filter.")
 
+    # Prepare rows for CSV output this iteration
+    iter_rows = []  # dicts with keys: smiles, score, source_task, source_model, iteration
+
     # 10. Add new SMILES to mol_population
     new_mols_for_population = [(s, score) for s, score in filtered_smiles_scores if s not in [mol[0] for mol in mol_population]]
+    for s, score in new_mols_for_population:
+        sources = smile_to_sources.get(s, [("unknown", "unknown")])
+        source_tasks = "|".join([t for t, _ in sources])
+        source_models = "|".join([m for _, m in sources])
+        iter_rows.append({
+            'smiles': s,
+            'score': float(score),
+            'source_tasks': source_tasks,
+            'source_models': source_models,
+            'iteration': iter,
+        })
     mol_population.extend(new_mols_for_population)
     print(f"Added {len(new_mols_for_population)} new molecules to the population.")
 
     # 11. Use reproduce to get new SMILES
     if mol_population:
         reproduce_start_time = time.time()
-        mol_population_smiles = [mol[0] for mol in mol_population]
-        reproduced_mols = reproduce(mol_population_smiles, mutation_rate=0.1)
+        # Convert distance scores to similarity scores (higher is better for reproduce)
+        mol_population_with_similarity = [(1.0 - score, smiles) for smiles, score in mol_population]
+        reproduced_mols = reproduce(mol_population_with_similarity, mutation_rate=0.1)
         print(f"Generated {len(reproduced_mols)} molecules via reproduce in {time.time() - reproduce_start_time:.2f}s.")
 
         # 12. Filter again using ChemeleonFilterModel
@@ -157,14 +184,29 @@ while len(mol_population) < collect_n:
         print(f"Filtered {len(reproduced_mols)} reproduced molecules, {len(reproduced_filtered)} passed.")
 
         new_reproduced_for_population = [(s, score) for s, score in reproduced_filtered if s not in [mol[0] for mol in mol_population]]
+        for s, score in new_reproduced_for_population:
+            # Record GA as an additional source
+            sources = smile_to_sources.get(s, [])
+            if ("GA reproduce", "f-RAG") not in sources:
+                sources = sources + [("GA reproduce", "f-RAG")]
+            smile_to_sources[s] = sources
+            source_tasks = "|".join([t for t, _ in sources])
+            source_models = "|".join([m for _, m in sources])
+            iter_rows.append({
+                'smiles': s,
+                'score': float(score),
+                'source_tasks': source_tasks,
+                'source_models': source_models,
+                'iteration': iter,
+            })
         mol_population.extend(new_reproduced_for_population)
         print(f"Added {len(new_reproduced_for_population)} new reproduced molecules to the population.")
 
-    # Write mol population to .smi file for this iteration
-    with open(f'generated_mols_{iter}.smi', 'w') as f:
-        for smiles, score in mol_population:
-            f.write(f"{smiles}\t{score}\n")
-    print(f"Wrote current population to generated_mols_{iter}.smi")
+    # Write iteration results to CSV with provenance
+    out_df = pd.DataFrame(iter_rows, columns=['smiles', 'score', 'source_tasks', 'source_models', 'iteration'])
+    out_path = f'generated_mols_{iter}.csv'
+    out_df.to_csv(out_path, index=False)
+    print(f"Wrote {len(out_df)} new records to {out_path}")
 
     iter_duration = time.time() - iter_start_time
     print(f"--- Iteration {iter} finished in {iter_duration:.2f} seconds. Population size: {len(mol_population)} ---")
