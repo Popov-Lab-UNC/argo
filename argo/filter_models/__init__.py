@@ -188,7 +188,11 @@ class ChemeleonFilterModel:
             return [(smiles, 0.0) for smiles in smiles_list]
         
         # Generate fingerprints for input molecules
-        input_fingerprints = self._generate_fingerprints(smiles_list)
+        # Important: _generate_fingerprints filters out invalid SMILES (None mols),
+        # so we must mirror that filtering here to keep indices aligned
+        parsed_mols = [Chem.MolFromSmiles(smiles) for smiles in smiles_list]
+        valid_smiles = [smiles for smiles, mol in zip(smiles_list, parsed_mols) if mol is not None]
+        input_fingerprints = self._generate_fingerprints(valid_smiles)
         
         if len(input_fingerprints) == 0:
             print("Warning: No valid fingerprints generated for input molecules")
@@ -199,8 +203,8 @@ class ChemeleonFilterModel:
         
         min_distances = np.min(distances, axis=1)
         
-        # Create list of (smiles, score) tuples
-        smiles_scores = [(smiles_list[i], min_distances[i]) for i in range(len(smiles_list))]
+        # Create list of (smiles, score) tuples aligned with valid_smiles only
+        smiles_scores = [(valid_smiles[i], float(min_distances[i])) for i in range(len(valid_smiles))]
         
         # Filter molecules based on threshold
         filtered_smiles_scores = [(smiles, score) for smiles, score in smiles_scores if score <= distance_threshold]
@@ -208,6 +212,6 @@ class ChemeleonFilterModel:
         if no_identical:
             filtered_smiles_scores = [(smiles, score) for smiles, score in filtered_smiles_scores if score > 0.0]
         
-        print(f"Filtered {len(smiles_list)} molecules: {len(filtered_smiles_scores)} passed (distance threshold: {distance_threshold:.3f})")
+        print(f"Filtered {len(smiles_list)} molecules ({len(valid_smiles)} valid): {len(filtered_smiles_scores)} passed (distance threshold: {distance_threshold:.3f})")
         
         return filtered_smiles_scores
