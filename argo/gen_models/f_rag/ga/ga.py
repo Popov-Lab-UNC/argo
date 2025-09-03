@@ -17,10 +17,26 @@ import argo.gen_models.f_rag.ga.mutate as mu
 
 
 def choose_parents(population_mol, population_scores):
+    '''
     population_scores = [s + 1e-10 for s in population_scores]
     sum_scores = sum(population_scores)
     population_probs = [p / sum_scores for p in population_scores]
     parents = np.random.choice(population_mol, p=population_probs, size=2)
+    '''
+    # Convert to numpy and sanitize scores
+    scores = np.asarray(population_scores, dtype=float)
+    # Replace NaN/Inf with 0
+    scores = np.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+    # Clamp negatives to 0 so probabilities are non-negative
+    scores = np.maximum(scores, 0.0)
+    total = scores.sum()
+    if total <= 0.0:
+        # Fallback to uniform probabilities if all scores are 0 or invalid
+        probs = np.full_like(scores, 1.0 / len(scores), dtype=float)
+    else:
+        probs = scores / total
+
+    parents = np.random.choice(population_mol, p=probs, size=2)
     return parents
 
 
