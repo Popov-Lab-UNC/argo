@@ -341,3 +341,41 @@ def find_connected_rotatable_bond_ends(mol):
             end_bonds.append(bond)
 
     return end_bonds
+
+def find_connected_rotatable_bond_ends_v2(mol):
+    """Find the ends of connected sequences of rotatable bonds.
+    
+    Args:
+        mol: RDKit molecule object
+        rotatable_bonds: List of tuples containing atom indices of rotatable bonds
+        
+    Returns:
+        List of tuples containing atom indices of the ends of connected rotatable bond sequences
+    """
+    # Count occurrences of each atom in rotatable bonds
+    rotatable_bonds = get_rotatable_bonds(mol, strict=False)
+
+    atom_counts = {}
+    for bond in rotatable_bonds:
+        for atom in bond:
+            atom_counts[atom] = atom_counts.get(atom, 0) + 1
+            
+    # Find atoms that appear only once - these are the ends
+    end_atoms_set = set([atom for atom, count in atom_counts.items() if count == 1])
+    
+    # Find bonds that contain these end atoms
+    end_bonds = set()
+
+    for atom_idx1, atom_idx2 in rotatable_bonds:
+        # Check if either atom is a terminal atom
+        is_terminal = atom_idx1 in end_atoms_set or atom_idx2 in end_atoms_set
+
+        # Check if the bond connects a ring system to a linker
+        is_ring_linker = mol.GetAtomWithIdx(atom_idx1).IsInRing() != mol.GetAtomWithIdx(atom_idx2).IsInRing()
+
+        # If either condition is true, add the bond to our set
+        if is_terminal or is_ring_linker:
+            # Using a tuple ensures the bond is hashable for the set
+            end_bonds.add(tuple(sorted((atom_idx1, atom_idx2))))
+
+    return list(end_bonds)

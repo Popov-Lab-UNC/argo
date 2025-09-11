@@ -40,7 +40,8 @@ scoring = [
 viz = [
     "seaborn>=0.13.2",
     "plotly>=6.3.0",
-    "nbformat>=4.2.0"
+    "nbformat>=4.2.0",
+    "py3Dmol>=2.5.2"
 ]
 
 [project.urls]
