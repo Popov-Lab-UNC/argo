@@ -89,7 +89,13 @@ class SAFECodec:
             inp = dm.to_smiles(inp)
         if inp is None:
             return None
-        return re.sub(r'\[\*:\d+\]', '*', inp)
+        
+        # Return in RDKit canonical SMILES format
+        sub_inp = re.sub(r'\[\*:\d+\]', '*', inp)
+        mol = Chem.MolFromSmiles(sub_inp)
+        if mol is None:
+            return None
+        return Chem.MolToSmiles(mol) # return canonical SMILES of substituted fragment
     
     def decode(self, 
                inp: str, 
