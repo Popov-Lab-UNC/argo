@@ -1,4 +1,7 @@
 from rdkit import Chem
+from rdkit.Chem.SaltRemover import SaltRemover
+from molvs import Standardizer
+from molvs.charge import Uncharger
 #from molscrub import Scrub
 from scrubber import Scrub
 from meeko import MoleculePreparation, PDBQTWriterLegacy
@@ -64,6 +67,7 @@ def process_ligand(args):
                counter += 1
             else:
                print(f"[PDBQT] Write failed for {name}: {error_msg}")
+               # Note: Failed writes are not counted in conformer_count
 
    return conformer_count
 
@@ -88,8 +92,8 @@ if __name__ == "__main__":
    n_processes = args.n_processes
 
    # Scrubbing and ligand preparation options
-   max_attempts = 5  # Maximum attempts for scrubbing each ligand
-   scrub = Scrub(ph_low=7.4, ph_high=7.4, skip_tautomers=True)  # Setup scrub instance with pH constraints
+   max_attempts = 10  # Maximum attempts for scrubbing each ligand
+   scrub = Scrub(ph_low=7.4, ph_high=7.4, skip_tautomers=False)  # Setup scrub instance with pH constraints
 
    # Input and output paths from arguments
    input_file = args.input_file
@@ -114,33 +118,39 @@ if __name__ == "__main__":
          if args.smiles_col not in df.columns:
             raise ValueError(f"Column '{args.smiles_col}' not found in CSV. Available columns: {list(df.columns)}")
          
+         s = Standardizer()
+         remover = SaltRemover()
+         uncharger = Uncharger()
          for idx, row in df.iterrows():
+            # Extract and clean input data
             ligand_smi = str(row[args.smiles_col]).strip()
             ligand_name = str(row[args.compound_id_col]).strip()
-            
-            # Check for multi-fragment SMILES
-            mol = Chem.MolFromSmiles(ligand_smi)
-            if mol is not None:
-               num_fragments = len(Chem.GetMolFrags(mol))
-               if num_fragments > 1:
-                  multi_fragment_count += 1
-                  
-                  # Get the largest fragment
-                  fragments = Chem.GetMolFrags(mol, asMols=True)
-                  largest_fragment = max(fragments, key=lambda x: x.GetNumAtoms())
-                  cleaned_smiles = Chem.MolToSmiles(largest_fragment)
-                  
-                  # Record original and cleaned SMILES
-                  if args.verbose:
-                     print(f"{ligand_smi}\t{ligand_name}\t{num_fragments} fragments -> {cleaned_smiles}\n")
-                  
-                  # Use the cleaned SMILES for processing
-                  ligand_list.append((cleaned_smiles, ligand_name, output_dir, scrub, max_attempts))
-               else:
-                  # Single fragment, use as is
-                  ligand_list.append((ligand_smi, ligand_name, output_dir, scrub, max_attempts))
-            else:
-               print(f"[CSV] Failed to parse SMILES: {ligand_smi} for compound {ligand_name}")
+
+            # Process SMILES through standardization pipeline
+            try:
+                mol = Chem.MolFromSmiles(ligand_smi)
+                if mol is None:
+                    print(f"[CSV] Failed to parse SMILES: {ligand_smi} for compound {ligand_name}")
+                    continue
+                    
+                mol = s.standardize(mol)
+                mol = remover.StripMol(mol)
+                mol = uncharger.uncharge(mol)
+
+                # Handle multi-fragment molecules
+                fragments = Chem.GetMolFrags(mol, asMols=True)
+                if len(fragments) > 1:
+                    multi_fragment_count += 1
+                    mol = max(fragments, key=lambda x: x.GetNumAtoms())
+                    if args.verbose:
+                        cleaned_smiles = Chem.MolToSmiles(mol)
+                        print(f"{ligand_smi}\t{ligand_name}\t{len(fragments)} fragments -> {cleaned_smiles}\n")
+
+                # Add processed molecule to list
+                ligand_list.append((Chem.MolToSmiles(mol), ligand_name, output_dir, scrub, max_attempts))
+
+            except Exception as e:
+                print(f"[CSV] Error processing {ligand_name}: {str(e)}")
                
       except Exception as e:
          print(f"Error reading CSV file: {e}")
@@ -186,10 +196,20 @@ if __name__ == "__main__":
 
    # Process ligands
    total_conformers = 0
+   failed_conformers = 0
+   
    with Pool(processes=n_processes) as pool:
       for result in pool.imap_unordered(process_ligand, ligand_list):
          total_conformers += result
          if total_conformers % 1000 == 0:
             print(f"Generated {total_conformers} conformers so far")
    
+   # Count actual files created to verify
+   import glob
+   actual_files = len(glob.glob(os.path.join(output_dir, "*.pdbqt")))
+   
    print(f"Successfully generated {total_conformers} conformers in {output_dir}")
+   print(f"Actual PDBQT files created: {actual_files}")
+   if actual_files != total_conformers:
+      print(f"Warning: Mismatch between reported ({total_conformers}) and actual files ({actual_files})")
+      print("This may indicate PDBQT write failures during processing")

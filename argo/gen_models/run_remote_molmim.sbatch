@@ -11,10 +11,9 @@
 module load apptainer
 export NGC_CLI_API_KEY=$APPTAINER_DOCKER_PASSWORD
 
-#WORKDIR=$(pwd)                       # e.g. /work/.../molmim
-WORKDIR=/work/users/s/h/shuhang/molmim
+WORKDIR=/work/users/s/h/shuhang/bionemo
 FAKE_HOME=${WORKDIR}/fake_home_override
-CACHE_DIR=${WORKDIR}/molmim_cache
+CACHE_DIR=${WORKDIR}/bionemo_cache
 TMP_WORK=${WORKDIR}/container_tmp
 APPTAINER_TMPDIR=${WORKDIR}/apptainer_tmp
 export APPTAINER_TMPDIR
